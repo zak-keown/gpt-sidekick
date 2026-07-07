@@ -129,11 +129,13 @@ export function createSwPortRouter(
     }
 
     if (port.name === PANEL_PORT) {
-      // A real side panel is a tab-less extension page. A content script can also
-      // open a PANEL_PORT connection, but Chrome sets its `sender.tab` — so an
-      // attested tab on the panel path is a content script trying to mint a
-      // panel@<claimed tab> identity for another tab. Reject it. (Codex, 2026-07-07.)
-      if (port.sender?.tab !== undefined) {
+      // Only one of OUR OWN extension pages (chrome-extension://<id>/…) may take
+      // the panel path. A content script that opens a PANEL_PORT reports the web
+      // page's URL, so this positive "are you my panel page?" check rejects the
+      // masquerade — without relying on side panels being tab-less, which is
+      // unverified in real Chrome (side panels are per-tab). (Codex, 2026-07-07.)
+      const ownPage = port.sender?.url?.startsWith(`chrome-extension://${runtime.id}/`);
+      if (!ownPage) {
         port.disconnect();
         return;
       }

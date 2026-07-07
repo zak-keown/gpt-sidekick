@@ -82,7 +82,10 @@ const contentSender = (tabId: number): chrome.runtime.MessageSender => ({
   id: EXT_ID,
   tab: { id: tabId } as chrome.tabs.Tab,
 });
-const panelSender = (): chrome.runtime.MessageSender => ({ id: EXT_ID });
+const panelSender = (): chrome.runtime.MessageSender => ({
+  id: EXT_ID,
+  url: `chrome-extension://${EXT_ID}/sidepanel.html`,
+});
 const panel = (tabId: number): Address => ({ context: "panel", tabId });
 
 const codeEvent = (messageId: string, turnIndex: number): TranscriptEvent => ({

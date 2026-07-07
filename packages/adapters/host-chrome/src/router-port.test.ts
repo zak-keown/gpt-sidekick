@@ -61,9 +61,13 @@ function fakeRuntime() {
 
 const contentSender = (tabId: number): chrome.runtime.MessageSender => ({
   id: EXT_ID,
+  url: "https://chatgpt.com/c/abc", // a content script reports the web page URL
   tab: { id: tabId } as chrome.tabs.Tab,
 });
-const panelSender = (): chrome.runtime.MessageSender => ({ id: EXT_ID });
+const panelSender = (): chrome.runtime.MessageSender => ({
+  id: EXT_ID,
+  url: `chrome-extension://${EXT_ID}/sidepanel.html`, // a real panel is our page
+});
 
 const env = (kind = "pushTranscript"): Envelope => ({ id: "e1", kind, payload: "x" });
 const routed = (
@@ -148,9 +152,8 @@ describe("createSwPortRouter — chrome ports bound to the pure router", () => {
   it("rejects a PANEL_PORT connection that carries an attested tab (content masquerade)", () => {
     const rt = fakeRuntime();
     createSwPortRouter(rt.runtime);
-    // A content script can open a panel-named port; Chrome still sets sender.tab.
-    // A real panel is a tab-less extension page, so an attested tab here means a
-    // content script trying to mint a panel@<claimed tab> identity — reject it.
+    // A content script can open a panel-named port, but it reports the web
+    // page's URL (not our extension page), so it can't mint a panel identity.
     const masquerade = new FakePort(PANEL, contentSender(7));
     rt.connect(masquerade);
     expect(masquerade.disconnected).toBe(true);
