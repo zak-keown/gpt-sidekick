@@ -63,7 +63,12 @@ export function canonicalizeNode(root: Element): string {
 
   const normalized = normalizeText(out.join(""));
   const tokenPattern = new RegExp(CODE_OPEN + "(\\d+)" + CODE_CLOSE, "g");
+  // Re-fence code so canonical text is faithful markdown AND the extractor can
+  // detect code blocks (```...```). The verbatim body is unchanged.
   return normalized
-    .replace(tokenPattern, (_match, index: string) => `\n${codes[Number(index)] ?? ""}\n`)
+    .replace(
+      tokenPattern,
+      (_match, index: string) => "\n```\n" + (codes[Number(index)] ?? "") + "\n```\n",
+    )
     .trim();
 }
