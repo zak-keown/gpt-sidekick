@@ -223,11 +223,45 @@ describe("capture — edge cases", () => {
       url: FIXTURE_URL,
       hydrateTurn: noop,
     });
-    // The answer survives; the empty tool shell is skipped, not emitted as "".
+    // The answer survives (non-dropping); the empty tool shell is skipped, not
+    // emitted as "". But the turn is flagged unstable, not reported complete —
+    // a partial multi-node paint must not masquerade as a full capture (Codex).
     expect(events).toHaveLength(1);
     expect(events[0]?.messageId).toBe("ab-answer-4001-8001-00000000000a");
     expect(events[0]?.text).toBe("the painted answer");
-    expect(state).toEqual({ kind: "complete" }); // the turn yielded real content
+    expect(state).toEqual({
+      kind: "partial",
+      captured: 0,
+      expected: 1,
+      unstable: ["t-partial"],
+    });
+  });
+
+  it("flags a turn unstable (not complete) when the content-root anchor is missing (Codex medium)", async () => {
+    // No [data-message-content]; text sits directly in the node beside chrome.
+    const doc = new DOMParser().parseFromString(
+      `<div id="thread">
+        <article data-turn-id="t-nocontent">
+          <div data-message-id="ab-nc-4001-8001-00000000000c" data-message-author-role="assistant">
+            the message text<button>Copy</button>
+          </div>
+        </article>
+      </div>`,
+      "text/html",
+    );
+    const noop = async () => {};
+    const { state } = await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: noop,
+    });
+    // Best-effort captured, but surfaced as not-clean rather than silently complete.
+    expect(state).toEqual({
+      kind: "partial",
+      captured: 0,
+      expected: 1,
+      unstable: ["t-nocontent"],
+    });
   });
 
   it("fails loudly when no turn skeleton matches (selectors rotted)", async () => {

@@ -70,20 +70,28 @@ export async function capture(opts: {
 
     const turnId = turn.getAttribute(anchors.turnIdAttr) ?? "";
 
-    // Compute canonical text per node BEFORE counting/emitting. Empty shells
-    // (a node mounted but not yet painted, or the hydrator gave up on timeout)
-    // are never emitted as text:"" — that would be false evidence. A painted
-    // sibling in a multi-node turn still survives: we skip the empty node, not
-    // the turn (dropping a real answer because a tool node is empty would be a
-    // worse, silent failure). A turn with zero non-empty messages is unstable.
-    let turnHasContent = false;
+    // Compute canonical text per node BEFORE counting/emitting. A turn is
+    // reported `complete` only when EVERY present message node is "clean" — its
+    // content-root anchor matched AND its text is non-empty. Painted siblings
+    // are still emitted (non-dropping: never drop a real answer because a tool
+    // node is empty), but a turn with an empty/unpainted node, a still-partial
+    // multi-node paint, or a missing content-root anchor is flagged `unstable`
+    // — never silently reported complete with partial or chrome-polluted text.
+    let messageCount = 0;
+    let cleanCount = 0;
     for (const node of turn.querySelectorAll(anchors.message)) {
       const messageId = node.getAttribute(anchors.messageIdAttr) ?? "";
       if (!messageId) continue;
-      const contentRoot = node.querySelector(anchors.content) ?? node;
-      const text = canonicalizeNode(contentRoot as Element);
-      if (text.length === 0) continue; // empty shell — not evidence
-      turnHasContent = true;
+      messageCount++;
+
+      const contentRoot = node.querySelector(anchors.content);
+      // Fall back to the whole node so a missing content-root anchor still
+      // captures best-effort text, but do NOT count that node clean (the text
+      // may include chrome/buttons) — the turn is flagged instead.
+      const text = canonicalizeNode((contentRoot ?? node) as Element);
+      if (contentRoot && text.length > 0) cleanCount++;
+
+      if (text.length === 0) continue; // never emit empty text as evidence
       if (seen.has(messageId)) continue; // dedup overlapping windows
       seen.add(messageId);
       events.push({
@@ -97,8 +105,8 @@ export async function capture(opts: {
       });
     }
 
-    if (turnHasContent) capturedTurns++;
-    else unstable.push(turnId); // no non-empty message — surfaced, never silent
+    if (messageCount > 0 && cleanCount === messageCount) capturedTurns++;
+    else unstable.push(turnId); // partial paint / missing content root / no nodes
   }
 
   const expected = turns.length;
