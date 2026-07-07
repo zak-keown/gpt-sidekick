@@ -20,7 +20,7 @@ function mountMessage(doc: Document, turn: Element, text: string): HTMLElement {
   node.setAttribute("data-message-id", "m-1");
   node.setAttribute("data-message-author-role", "assistant");
   const content = doc.createElement("div");
-  content.setAttribute("data-message-content", "");
+  content.className = "markdown"; // the real assistant content container
   content.textContent = text;
   node.append(content);
   turn.append(node);
