@@ -54,6 +54,23 @@ export function validateOutline(
       droppedNoEvidence++;
       continue;
     }
+
+    // Ground the DISPLAYED text too, not just the evidence array. The user reads
+    // title + summary; a buggy/future extractor must not be able to attach
+    // rewritten or hallucinated display text to otherwise-valid evidence. Both
+    // must be non-empty exact substrings of the cited record (SPEC §6.3).
+    const record = recordsById.get(first.messageId);
+    const grounded =
+      record !== undefined &&
+      candidate.title.length > 0 &&
+      candidate.summary.length > 0 &&
+      record.text.includes(candidate.title) &&
+      record.text.includes(candidate.summary);
+    if (!grounded) {
+      droppedNoEvidence++;
+      continue;
+    }
+
     // Deterministic id (no host randomness in DOM-free core): stable across
     // re-index so the store upserts an item in place.
     items.push({

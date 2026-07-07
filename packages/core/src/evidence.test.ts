@@ -128,6 +128,26 @@ describe("validateOutline — the Evidence Invariant", () => {
     }
   });
 
+  it("drops an item whose title is not grounded in the cited record (Codex high)", () => {
+    const phrase = "use the durable id";
+    const start = TEXT.indexOf(phrase);
+    const c = candidate(phrase, start, start + phrase.length);
+    c.title = "REWRITTEN text not in the source"; // valid evidence, ungrounded title
+    const { items, droppedNoEvidence } = validateOutline([c], RECORDS);
+    expect(items).toEqual([]);
+    expect(droppedNoEvidence).toBe(1);
+  });
+
+  it("drops an item whose summary is not grounded in the cited record (Codex high)", () => {
+    const phrase = "use the durable id";
+    const start = TEXT.indexOf(phrase);
+    const c = candidate(phrase, start, start + phrase.length);
+    c.summary = "a hallucinated summary the model made up";
+    const { items, droppedNoEvidence } = validateOutline([c], RECORDS);
+    expect(items).toEqual([]);
+    expect(droppedNoEvidence).toBe(1);
+  });
+
   it("counts drops while keeping the valid items in a mixed batch", () => {
     const phrase = "durable id";
     const start = TEXT.indexOf(phrase);

@@ -6,6 +6,8 @@ import type { TranscriptStore } from "./store";
 export type IndexResult = {
   items: OutlineItem[];
   droppedNoEvidence: number;
+  /** False if a newer capture pass already wrote a fresher outline (this run was stale). */
+  written: boolean;
 };
 
 /**
@@ -20,9 +22,9 @@ export async function indexConversation(
   conversationId: string,
   extractor: Extractor,
 ): Promise<IndexResult> {
-  const records = await store.getRecords(conversationId);
+  const { records, revision } = await store.snapshot(conversationId);
   const candidates = extractor.extract(records);
   const { items, droppedNoEvidence } = validateOutline(candidates, records);
-  await store.putOutline(conversationId, items);
-  return { items, droppedNoEvidence };
+  const written = await store.putOutline(conversationId, items, revision);
+  return { items, droppedNoEvidence, written };
 }

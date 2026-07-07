@@ -55,6 +55,20 @@ function markerCategory(sentence: string): OutlineType | null {
   return null;
 }
 
+/**
+ * A short title that is a REAL PREFIX of the (trimmed) quote — so it stays an
+ * exact substring of the source and passes core's display-grounding check. A
+ * word-join ("first 8 words") would NOT be a substring for code (newlines /
+ * indentation collapse), so it can't be used at the trust boundary.
+ */
+function titleFrom(quote: string): string {
+  const trimmed = quote.trim();
+  if (trimmed.length <= 60) return trimmed;
+  const head = trimmed.slice(0, 60);
+  const lastSpace = head.lastIndexOf(" ");
+  return lastSpace >= 20 ? head.slice(0, lastSpace) : head;
+}
+
 function buildCandidate(
   record: TranscriptRecord,
   type: OutlineType,
@@ -62,10 +76,9 @@ function buildCandidate(
   offsetStart: number,
   offsetEnd: number,
 ): OutlineCandidate {
-  const title = quote.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
   return {
     type,
-    title: title || quote.slice(0, 40),
+    title: titleFrom(quote),
     summary: quote.trim(),
     evidence: [{ messageId: record.messageId, quote, offsetStart, offsetEnd }],
   };

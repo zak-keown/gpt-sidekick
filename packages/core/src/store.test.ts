@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryTranscriptStore, hashText } from "./store";
-import type { Role, TranscriptEvent } from "./model";
+import type { OutlineItem, Role, TranscriptEvent } from "./model";
 
 function ev(
   messageId: string,
@@ -90,11 +90,35 @@ describe("InMemoryTranscriptStore", () => {
 
   it("persists and returns an outline", async () => {
     const store = new InMemoryTranscriptStore(() => "T");
-    await store.putOutline("c1", [
-      { id: "x", type: "note", title: "t", summary: "s", evidence: [] },
-    ]);
+    await store.putOutline(
+      "c1",
+      [{ id: "x", type: "note", title: "t", summary: "s", evidence: [] }],
+      0,
+    );
     expect(await store.getOutline("c1")).toHaveLength(1);
     expect(await store.getOutline("c2")).toEqual([]);
+  });
+
+  it("rejects a stale index that would overwrite a newer outline (Codex medium)", async () => {
+    const store = new InMemoryTranscriptStore(() => "T");
+    const item = (id: string): OutlineItem => ({
+      id,
+      type: "note",
+      title: "t",
+      summary: "s",
+      evidence: [],
+    });
+
+    await store.upsertRecords([ev("m1", "first", 0)]); // revision 1
+    const stale = await store.snapshot("c1"); // read at revision 1
+    await store.upsertRecords([ev("m2", "second", 1)]); // revision 2
+    const fresh = await store.snapshot("c1"); // read at revision 2
+
+    // The newer index writes first...
+    expect(await store.putOutline("c1", [item("new")], fresh.revision)).toBe(true);
+    // ...then the older, slower index must NOT clobber it.
+    expect(await store.putOutline("c1", [item("old")], stale.revision)).toBe(false);
+    expect((await store.getOutline("c1")).map((i) => i.id)).toEqual(["new"]);
   });
 
   it("hashText is deterministic and text-sensitive", () => {
