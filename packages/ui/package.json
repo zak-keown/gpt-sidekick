@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/SidePanel.tsx"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit"
