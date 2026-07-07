@@ -32,8 +32,21 @@ import type { Envelope } from "@gpt-sidekick/core/protocol";
  * decision is deliberately left to live-wiring (plans/M2-core-evidence.md).
  */
 
-const CONTENT_PORT = "gpt-sidekick:content";
-const PANEL_PORT = "gpt-sidekick:panel";
+export const CONTENT_PORT = "gpt-sidekick:content";
+export const PANEL_PORT = "gpt-sidekick:panel";
+
+/** Deliver to a port, swallowing the "disconnected port object" throw Chrome
+ *  raises when a panel/content context closes between a push and its
+ *  `onDisconnect` firing. Without this a single dead target would abort the
+ *  router's delivery loop and drop the message for everyone. `onDisconnect`
+ *  unlinks the dead port moments later. */
+function postSafely(port: chrome.runtime.Port, routed: RoutedEnvelope): void {
+  try {
+    port.postMessage(routed);
+  } catch {
+    // Port already torn down; nothing to deliver to.
+  }
+}
 
 /** The slice of `chrome.runtime` this needs — injectable so tests fake it. */
 type RuntimeLike = {
@@ -134,7 +147,7 @@ function bindKnownLink(
 ): void {
   const link: Link = {
     attested,
-    deliver: (routed) => port.postMessage(routed),
+    deliver: (routed) => postSafely(port, routed),
   };
   const unlink = router.addLink(link);
   port.onMessage.addListener((message: unknown) => {
@@ -155,7 +168,7 @@ function bindPanelLink(router: Router, port: chrome.runtime.Port): void {
         port.disconnect(); // first message must be a valid hello
         return;
       }
-      link = { attested, deliver: (routed) => port.postMessage(routed) };
+      link = { attested, deliver: (routed) => postSafely(port, routed) };
       unlink = router.addLink(link);
       return; // the hello carries no envelope
     }

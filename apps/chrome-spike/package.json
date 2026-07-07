@@ -12,6 +12,7 @@
   "dependencies": {
     "@gpt-sidekick/adapter-host-chrome": "workspace:*",
     "@gpt-sidekick/adapter-provider-chatgpt": "workspace:*",
+    "@gpt-sidekick/adapter-storage-dexie": "workspace:*",
     "@gpt-sidekick/core": "workspace:*",
     "@gpt-sidekick/ui": "workspace:*",
     "preact": "^10.24.0"

@@ -35,6 +35,9 @@ importers:
       '@gpt-sidekick/adapter-provider-chatgpt':
         specifier: workspace:*
         version: link:../../packages/adapters/provider-chatgpt
+      '@gpt-sidekick/adapter-storage-dexie':
+        specifier: workspace:*
+        version: link:../../packages/adapters/storage-dexie
       '@gpt-sidekick/core':
         specifier: workspace:*
         version: link:../../packages/core

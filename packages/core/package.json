@@ -11,7 +11,8 @@
     "./evidence": "./src/evidence.ts",
     "./extractor": "./src/extractor.ts",
     "./store": "./src/store.ts",
-    "./pipeline": "./src/pipeline.ts"
+    "./pipeline": "./src/pipeline.ts",
+    "./service": "./src/service.ts"
   },
   "scripts": {
     "build": "tsc --noEmit"

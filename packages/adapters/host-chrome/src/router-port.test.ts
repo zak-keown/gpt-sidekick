@@ -14,6 +14,8 @@ class FakePort {
   private readonly disconnectListeners: DisconnectListener[] = [];
   readonly posted: unknown[] = [];
   disconnected = false;
+  /** When true, `postMessage` throws — simulates Chrome's "disconnected port". */
+  failPost = false;
 
   constructor(
     public readonly name: string,
@@ -27,6 +29,7 @@ class FakePort {
     addListener: (l: DisconnectListener) => this.disconnectListeners.push(l),
   };
   readonly postMessage = (message: unknown): void => {
+    if (this.failPost) throw new Error("Attempting to use a disconnected port object");
     this.posted.push(message);
   };
   readonly disconnect = (): void => {
@@ -149,6 +152,19 @@ describe("createSwPortRouter — chrome ports bound to the pure router", () => {
     rt.connect(badPanel);
     badPanel.emit({ kind: "not-hello" });
     expect(badPanel.disconnected).toBe(true);
+  });
+
+  it("does not let a disconnected target's postMessage throw abort routing", () => {
+    const rt = fakeRuntime();
+    createSwPortRouter(rt.runtime);
+    const panel7 = connectPanel(rt, 7);
+    const content7 = connectContent(rt, 7);
+    // The panel port was torn down between the push and its onDisconnect firing.
+    panel7.failPost = true;
+
+    expect(() =>
+      content7.emit(routed({ context: "panel", tabId: 7 }, env())),
+    ).not.toThrow();
   });
 
   it("stops delivering to a panel after it disconnects", () => {
