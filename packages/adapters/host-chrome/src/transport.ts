@@ -48,10 +48,11 @@ const DEFAULT_TIMEOUT_MS = 5_000;
  * constructible at a call site. Always prefer this over calling `createRpc`
  * with `createChromeRuntimeTransport()` directly.
  *
- * ⚠️ ECHO-ONLY UNTIL M1. This rides `runtime.sendMessage` *broadcast*: unique
- * ids stop reply mis-resolution, but every reply still reaches every context's
- * memory. Do NOT send transcript/outline/source-jump payloads through this
- * until targeted/port routing lands — see the [M1-BLOCKING] gate in SPEC §13.
+ * ⚠️ ECHO-ONLY. This rides `runtime.sendMessage` *broadcast*: unique ids stop
+ * reply mis-resolution, but every reply still reaches every context's memory. Do
+ * NOT send transcript/outline/source-jump payloads through this — those go over
+ * the §13 targeted router (`./router` → `createSwPortRouter`, core's `Router`),
+ * which relays each payload to only its own tab's panel.
  */
 export function createChromeRpc(): Rpc {
   return createRpc(createChromeRuntimeTransport(), {
