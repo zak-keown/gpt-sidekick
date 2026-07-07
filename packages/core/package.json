@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./text": "./src/text.ts"
   },
   "scripts": {
     "build": "tsc --noEmit"

@@ -1,24 +1,17 @@
 /**
- * ChatGPT provider adapter — M0 seam only.
+ * ChatGPT provider adapter — public surface.
  *
- * M1 replaces this with the scroll-and-accumulate pass (SPEC §5.2): walk the
- * persistent `data-turn-id` skeleton, hydrate each turn, capture while
- * hydrated, upsert by [conversationId+messageId].
+ * M1: `capture()` turns a (possibly virtualized) ChatGPT DOM into
+ * `TranscriptEvent[]` keyed on the durable `data-message-id`, driving a scroll
+ * pass over the persistent `data-turn-id` skeleton via an injected `hydrateTurn`.
+ * The live content-script hydrator + targeted routing land in M1b (SPEC §13).
  */
-
-export type TranscriptEvent = {
-  provider: string;
-  conversationId: string;
-  messageId: string;
-  role: "user" | "assistant";
-  text: string;
-  createdAt?: string;
-  anchor: {
-    kind: "dom" | "file" | "transcript";
-    locator: string;
-  };
-};
-
-export function capture(): TranscriptEvent[] {
-  throw new Error("NotImplemented: provider-chatgpt capture lands in M1");
-}
+export { capture } from "./capture";
+export { anchors, AS_OF } from "./anchors";
+export { canonicalizeNode } from "./canonicalize";
+export type {
+  CaptureResult,
+  CaptureState,
+  Role,
+  TranscriptEvent,
+} from "./types";

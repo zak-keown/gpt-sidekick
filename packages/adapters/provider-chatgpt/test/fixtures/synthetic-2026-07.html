@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+  SYNTHETIC ChatGPT-shaped fixture — NO personal data (safe to commit; see M1 plan
+  "Fixture policy"). Models the 2026-07-02 virtualization finding:
+    - every turn has a persistent [data-turn-id] wrapper (the skeleton),
+    - only SOME turns are hydrated (carry [data-message-id] nodes),
+    - virtualized-out turns are BARE wrappers; their real content sits in an inert
+      <template data-hydrate-for="..."> that querySelectorAll('[data-message-id]')
+      cannot see — exactly like a turn evicted from the live DOM. The test's active
+      hydrateTurn fake injects a template's node to simulate scroll rehydration.
+  Encodes the hard cases: a multi-node turn (tool -> reasoning -> answer), fenced
+  code blocks, all four roles, and one placeholder with NO template (-> unstable).
+-->
+<html>
+  <body>
+    <main>
+      <div id="thread-scroll-container">
+        <!-- Turn 1: pre-hydrated, user -->
+        <article data-turn-id="a1b2c3d4-0001-4001-8001-000000000001">
+          <div
+            data-message-id="f1e2d3c4-0001-4a01-8b01-000000000001"
+            data-message-author-role="user"
+          >
+            <div data-message-content>What's the plan for the sidecar memory layer?</div>
+          </div>
+        </article>
+
+        <!-- Turn 2: pre-hydrated, MULTI-NODE (tool -> reasoning -> answer w/ code) -->
+        <article data-turn-id="a1b2c3d4-0002-4002-8002-000000000002">
+          <div
+            data-message-id="f1e2d3c4-0002-4a02-8b0a-00000000002a"
+            data-message-author-role="tool"
+          >
+            <div data-message-content>web.run: fetched 3 sources</div>
+          </div>
+          <div
+            data-message-id="f1e2d3c4-0002-4a02-8b0b-00000000002b"
+            data-message-author-role="assistant"
+          >
+            <div data-message-content>Let me reason about the anchors before answering.</div>
+          </div>
+          <div
+            data-message-id="f1e2d3c4-0002-4a02-8b0c-00000000002c"
+            data-message-author-role="assistant"
+          >
+            <div data-message-content>
+              Use the durable id as the key. Example:
+              <pre><code>function key(e) {
+    return e.conversationId + ":" + e.messageId;
+}</code></pre>
+            </div>
+          </div>
+        </article>
+
+        <!-- Turn 3: PLACEHOLDER (virtualized out), content in template, user -->
+        <article data-turn-id="a1b2c3d4-0003-4003-8003-000000000003"></article>
+
+        <!-- Turn 4: PLACEHOLDER (virtualized out), content in template, assistant w/ code -->
+        <article data-turn-id="a1b2c3d4-0004-4004-8004-000000000004"></article>
+
+        <!-- Turn 5: PLACEHOLDER with NO template -> never hydrates -> unstable -->
+        <article data-turn-id="a1b2c3d4-0005-4005-8005-000000000005"></article>
+
+        <!-- Turn 6: pre-hydrated, system -->
+        <article data-turn-id="a1b2c3d4-0006-4006-8006-000000000006">
+          <div
+            data-message-id="f1e2d3c4-0006-4a06-8b06-000000000006"
+            data-message-author-role="system"
+          >
+            <div data-message-content>You are a helpful assistant.</div>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <!-- Inert hydration content: detached from the live DOM tree, invisible to
+         querySelectorAll('[data-message-id]'). The active hydrateTurn fake clones
+         these in to simulate scroll-triggered rehydration. -->
+    <template data-hydrate-for="a1b2c3d4-0003-4003-8003-000000000003">
+      <div
+        data-message-id="f1e2d3c4-0003-4a03-8b03-000000000003"
+        data-message-author-role="user"
+      >
+        <div data-message-content>How do we handle virtualized-out turns?</div>
+      </div>
+    </template>
+    <template data-hydrate-for="a1b2c3d4-0004-4004-8004-000000000004">
+      <div
+        data-message-id="f1e2d3c4-0004-4a04-8b04-000000000004"
+        data-message-author-role="assistant"
+      >
+        <div data-message-content>
+          Scroll the skeleton and re-hydrate each turn:
+          <pre><code>async function hydrate(turn) {
+    turn.scrollIntoView({ block: "center" });
+    await waitForMessageNode(turn);
+}</code></pre>
+        </div>
+      </div>
+    </template>
+    <!-- (No template for turn a1b2c3d4-0005-... -> stays unstable) -->
+  </body>
+</html>
