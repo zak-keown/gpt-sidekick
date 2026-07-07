@@ -121,6 +121,25 @@ describe("InMemoryTranscriptStore", () => {
     expect((await store.getOutline("c1")).map((i) => i.id)).toEqual(["new"]);
   });
 
+  it("rejects a stale index even when it is the FIRST writer (Codex high)", async () => {
+    const store = new InMemoryTranscriptStore(() => "T");
+    const item = (id: string): OutlineItem => ({
+      id,
+      type: "note",
+      title: "t",
+      summary: "s",
+      evidence: [],
+    });
+
+    await store.upsertRecords([ev("m1", "first", 0)]); // revision 1
+    const stale = await store.snapshot("c1"); // read at revision 1
+    await store.upsertRecords([ev("m2", "second", 1)]); // revision 2, no outline yet
+
+    // A rev-1 index writing first must still be rejected — it's missing m2.
+    expect(await store.putOutline("c1", [item("stale")], stale.revision)).toBe(false);
+    expect(await store.getOutline("c1")).toEqual([]);
+  });
+
   it("hashText is deterministic and text-sensitive", () => {
     expect(hashText("abc")).toBe(hashText("abc"));
     expect(hashText("abc")).not.toBe(hashText("abd"));

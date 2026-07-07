@@ -55,17 +55,17 @@ export function validateOutline(
       continue;
     }
 
-    // Ground the DISPLAYED text too, not just the evidence array. The user reads
-    // title + summary; a buggy/future extractor must not be able to attach
-    // rewritten or hallucinated display text to otherwise-valid evidence. Both
-    // must be non-empty exact substrings of the cited record (SPEC §6.3).
-    const record = recordsById.get(first.messageId);
+    // Ground the DISPLAYED text against the validated EVIDENCE SPAN — not merely
+    // the containing record. The user reads title + summary; requiring them only
+    // to appear somewhere in the message would let a future extractor cite quote
+    // X yet show text lifted from an unrelated sentence Y, misrepresenting what
+    // the evidence supports (Codex). Both must be non-empty substrings of one of
+    // the item's own evidence quotes (SPEC §6.3).
     const grounded =
-      record !== undefined &&
-      candidate.title.length > 0 &&
-      candidate.summary.length > 0 &&
-      record.text.includes(candidate.title) &&
-      record.text.includes(candidate.summary);
+      candidate.title.trim().length > 0 &&
+      candidate.summary.trim().length > 0 &&
+      candidate.evidence.some((ev) => ev.quote.includes(candidate.title)) &&
+      candidate.evidence.some((ev) => ev.quote.includes(candidate.summary));
     if (!grounded) {
       droppedNoEvidence++;
       continue;

@@ -148,6 +148,18 @@ describe("validateOutline — the Evidence Invariant", () => {
     expect(droppedNoEvidence).toBe(1);
   });
 
+  it("drops an item whose display text is in the record but NOT in the evidence span (Codex medium)", () => {
+    // Evidence cites "durable id", but the title is lifted from another phrase
+    // in the same message ("we decided") — grounded in the record, not the span.
+    const phrase = "durable id";
+    const start = TEXT.indexOf(phrase);
+    const c = candidate(phrase, start, start + phrase.length);
+    c.title = "we decided"; // real substring of the record, absent from the quote
+    const { items, droppedNoEvidence } = validateOutline([c], RECORDS);
+    expect(items).toEqual([]);
+    expect(droppedNoEvidence).toBe(1);
+  });
+
   it("counts drops while keeping the valid items in a mixed batch", () => {
     const phrase = "durable id";
     const start = TEXT.indexOf(phrase);
