@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     "./protocol": "./src/protocol.ts",
-    "./text": "./src/text.ts"
+    "./text": "./src/text.ts",
+    "./model": "./src/model.ts",
+    "./evidence": "./src/evidence.ts"
   },
   "scripts": {
     "build": "tsc --noEmit"
