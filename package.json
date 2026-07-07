@@ -1,0 +1,25 @@
+{
+  "name": "gpt-sidekick",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "vitest run",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "lint": "eslint .",
+    "e2e": "pnpm --filter chrome-spike e2e"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-plugin-boundaries": "^5.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^4.0.0"
+  }
+}

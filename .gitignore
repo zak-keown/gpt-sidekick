@@ -1,0 +1,15 @@
+# Real captured conversations are personal data — never commit (SPEC §7/§11)
+fixtures.local/
+
+# macOS
+.DS_Store
+
+# Node / build (pre-seeded for when M0 lands)
+node_modules/
+dist/
+.output/
+.wxt/
+.turbo/
+test-results/
+playwright-report/
+*.log

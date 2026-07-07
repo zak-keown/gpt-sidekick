@@ -1,0 +1,27 @@
+{
+  "name": "chrome-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build && wxt zip",
+    "e2e": "playwright test",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@gpt-sidekick/adapter-host-chrome": "workspace:*",
+    "@gpt-sidekick/adapter-provider-chatgpt": "workspace:*",
+    "@gpt-sidekick/core": "workspace:*",
+    "@gpt-sidekick/ui": "workspace:*",
+    "preact": "^10.24.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/chrome": "^0.0.280",
+    "@preact/preset-vite": "^2.9.0",
+    "@vanilla-extract/vite-plugin": "^4.0.0",
+    "typescript": "^5.5.0",
+    "wxt": "^0.20.0"
+  }
+}

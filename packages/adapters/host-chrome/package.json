@@ -1,0 +1,19 @@
+{
+  "name": "@gpt-sidekick/adapter-host-chrome",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/transport.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gpt-sidekick/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.280",
+    "typescript": "^5.5.0"
+  }
+}

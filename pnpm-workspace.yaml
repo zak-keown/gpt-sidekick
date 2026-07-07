@@ -1,0 +1,8 @@
+packages:
+  - packages/core
+  - packages/adapters/*
+  - packages/ui
+  - apps/*
+allowBuilds:
+  esbuild: true
+  spawn-sync: false
