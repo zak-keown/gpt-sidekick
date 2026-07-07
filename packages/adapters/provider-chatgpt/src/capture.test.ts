@@ -134,12 +134,12 @@ describe("capture — edge cases", () => {
       `<div id="thread">
         <article data-turn-id="t-1">
           <div data-message-id="dup-0001-4001-8001-000000000001" data-message-author-role="user">
-            <div data-message-content>hello</div>
+            <div class="markdown">hello</div>
           </div>
         </article>
         <article data-turn-id="t-2">
           <div data-message-id="dup-0001-4001-8001-000000000001" data-message-author-role="user">
-            <div data-message-content>hello</div>
+            <div class="markdown">hello</div>
           </div>
         </article>
       </div>`,
@@ -156,14 +156,14 @@ describe("capture — edge cases", () => {
       `<div id="thread">
         <article data-turn-id="t-empty">
           <div data-message-id="m-empty-0001-4001-8001-000000000001" data-message-author-role="assistant">
-            <div data-message-content></div>
+            <div class="markdown"></div>
           </div>
         </article>
       </div>`,
       "text/html",
     );
     const paintLate = async (turn: Element) => {
-      const content = turn.querySelector("[data-message-content]");
+      const content = turn.querySelector(".markdown");
       if (content) content.textContent = "painted after mount";
     };
     const { events, state } = await capture({
@@ -182,7 +182,7 @@ describe("capture — edge cases", () => {
       `<div id="thread">
         <article data-turn-id="t-shell">
           <div data-message-id="ab-shell-4001-8001-000000000001" data-message-author-role="assistant">
-            <div data-message-content></div>
+            <div class="markdown"></div>
           </div>
         </article>
       </div>`,
@@ -208,10 +208,10 @@ describe("capture — edge cases", () => {
       `<div id="thread">
         <article data-turn-id="t-partial">
           <div data-message-id="ab-answer-4001-8001-00000000000a" data-message-author-role="assistant">
-            <div data-message-content>the painted answer</div>
+            <div class="markdown">the painted answer</div>
           </div>
           <div data-message-id="ab-empty-4001-8001-00000000000b" data-message-author-role="tool">
-            <div data-message-content></div>
+            <div class="markdown"></div>
           </div>
         </article>
       </div>`,
@@ -238,7 +238,7 @@ describe("capture — edge cases", () => {
   });
 
   it("flags a turn unstable (not complete) when the content-root anchor is missing (Codex medium)", async () => {
-    // No [data-message-content]; text sits directly in the node beside chrome.
+    // No content root (.markdown/.whitespace-pre-wrap); text sits directly in the node beside chrome.
     const doc = new DOMParser().parseFromString(
       `<div id="thread">
         <article data-turn-id="t-nocontent">
@@ -271,7 +271,7 @@ describe("capture — edge cases", () => {
       `<div id="thread">
         <article data-turn-id="t-emptycode">
           <div data-message-id="ab-ec-4001-8001-00000000000e" data-message-author-role="assistant">
-            <div data-message-content><pre><code></code></pre></div>
+            <div class="markdown"><pre><code></code></pre></div>
           </div>
         </article>
       </div>`,

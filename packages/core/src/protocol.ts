@@ -80,7 +80,33 @@ export class RpcTimeoutError extends Error {
   }
 }
 
-const REPLY_SUFFIX = ":reply";
+export const REPLY_SUFFIX = ":reply";
+
+/**
+ * Reply-envelope shaping, shared so every RPC responder produces byte-identical
+ * replies. A routing-aware SW dispatcher (host-chrome) reuses these too — if its
+ * reply shape ever drifted from `createRpc`'s, the caller's `createRpc` would
+ * silently fail to match the reply and hang until timeout. One impl, no drift.
+ */
+export function buildReply(
+  requestId: string,
+  requestKind: string,
+  payload: unknown,
+): Envelope {
+  return { id: requestId, kind: requestKind + REPLY_SUFFIX, payload };
+}
+
+export function buildErrorReply(
+  requestId: string,
+  requestKind: string,
+  err: unknown,
+): Envelope {
+  return {
+    id: requestId,
+    kind: requestKind + REPLY_SUFFIX,
+    error: err instanceof Error ? err.message : String(err),
+  };
+}
 
 /** Best-effort globally-unique id source with no host dependency. */
 function defaultIdFactory(): () => string {
@@ -119,18 +145,12 @@ export function createRpc(transport: Transport, options: RpcOptions = {}): Rpc {
 
     const handler = handlers.get(envelope.kind);
     if (!handler) return; // not ours — another context may answer
-    const replyKind = envelope.kind + REPLY_SUFFIX;
     Promise.resolve()
       .then(() => handler(envelope.payload))
       .then(
-        (reply) =>
-          transport.send({ id: envelope.id, kind: replyKind, payload: reply }),
+        (reply) => transport.send(buildReply(envelope.id, envelope.kind, reply)),
         (err: unknown) =>
-          transport.send({
-            id: envelope.id,
-            kind: replyKind,
-            error: err instanceof Error ? err.message : String(err),
-          }),
+          transport.send(buildErrorReply(envelope.id, envelope.kind, err)),
       );
   });
 

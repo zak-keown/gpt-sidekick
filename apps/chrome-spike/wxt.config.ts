@@ -5,12 +5,13 @@ import { vanillaExtractPlugin } from "@vanilla-extract/vite-plugin";
 export default defineConfig({
   manifest: {
     name: "GPT-Sidekick (spike)",
-    // Least-privilege for M0 (Codex adversarial review, 2026-07-07): only the
-    // side panel. The chatgpt.com content-script seam (entrypoints/chatgpt.content.ts)
-    // carries its own host access via its match pattern and stays inert.
-    // `scripting`, `storage`, `unlimitedStorage`, and an explicit host_permissions
-    // entry return in the milestone that first uses each (storage → M2;
-    // host_permissions → M1, for targeted tabs.sendMessage routing per SPEC §13).
+    // Least-privilege: only the side panel. The chatgpt.com content-script seam
+    // (entrypoints/chatgpt.content.ts) carries its own host access via its match
+    // pattern and stays inert until M2b. §13 targeted routing uses
+    // `runtime.connect` (intra-extension) — it needs NO `host_permissions` and no
+    // `tabs`/`tabs.sendMessage` permission; the content-script match pattern is
+    // the only host access required. `storage`/`unlimitedStorage` return in M2b's
+    // live wiring when the Dexie store is first persisted from the extension.
     permissions: ["sidePanel"],
     action: {
       default_title: "GPT-Sidekick",

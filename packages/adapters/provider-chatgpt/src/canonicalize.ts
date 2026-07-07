@@ -33,7 +33,12 @@ function walk(node: Node, out: string[], codes: string[]): void {
     const el = child as Element;
     if (el.tagName === "PRE") {
       const index = codes.length;
-      codes.push(el.textContent ?? "");
+      // A ChatGPT code block wraps a toolbar (language label + Copy/Run button)
+      // AND the <code> element inside the <pre>. Fence the <code> body so the
+      // toolbar chrome ("PythonRun…", validated against a real capture) isn't
+      // captured as code. Fall back to the pre's text if there is no <code>.
+      const codeEl = el.querySelector("code");
+      codes.push((codeEl ?? el).textContent ?? "");
       out.push(" " + CODE_OPEN + index + CODE_CLOSE + " ");
       continue;
     }

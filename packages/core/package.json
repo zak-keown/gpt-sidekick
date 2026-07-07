@@ -5,12 +5,14 @@
   "type": "module",
   "exports": {
     "./protocol": "./src/protocol.ts",
+    "./router": "./src/router.ts",
     "./text": "./src/text.ts",
     "./model": "./src/model.ts",
     "./evidence": "./src/evidence.ts",
     "./extractor": "./src/extractor.ts",
     "./store": "./src/store.ts",
-    "./pipeline": "./src/pipeline.ts"
+    "./pipeline": "./src/pipeline.ts",
+    "./service": "./src/service.ts"
   },
   "scripts": {
     "build": "tsc --noEmit"
