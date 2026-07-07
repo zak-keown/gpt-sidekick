@@ -4,6 +4,7 @@ import { indexConversation } from "./pipeline";
 import { RulesExtractor } from "./extractor";
 import type { Role, TranscriptEvent } from "./model";
 
+let seq = 0;
 function ev(messageId: string, text: string, role: Role = "assistant"): TranscriptEvent {
   return {
     provider: "chatgpt",
@@ -11,6 +12,7 @@ function ev(messageId: string, text: string, role: Role = "assistant"): Transcri
     messageId,
     role,
     text,
+    turnIndex: seq++,
     anchor: { kind: "dom", locator: `[data-message-id="${messageId}"]` },
   };
 }

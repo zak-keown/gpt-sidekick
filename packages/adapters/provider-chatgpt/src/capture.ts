@@ -70,7 +70,7 @@ export async function capture(opts: {
   const unstable: string[] = [];
   let capturedTurns = 0;
 
-  for (const turn of turns) {
+  for (const [turnIndex, turn] of turns.entries()) {
     if (!isHydrated(turn)) {
       await hydrateTurn(turn);
     }
@@ -111,6 +111,7 @@ export async function capture(opts: {
         messageId,
         role: normalizeRole(node.getAttribute(anchors.roleAttr)),
         text,
+        turnIndex, // skeleton position — stable across passes, for backfill-safe ordering
         turnId,
         anchor: { kind: "dom", locator: `[${anchors.messageIdAttr}="${messageId}"]` },
       });

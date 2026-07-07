@@ -12,6 +12,7 @@ export type TranscriptEvent = {
   messageId: string; // ChatGPT data-message-id (server UUID) — the durable key
   role: Role;
   text: string; // canonical text (§5.3): prose normalized, code verbatim
+  turnIndex: number; // position in the data-turn-id skeleton — stable across passes
   createdAt?: string;
   turnId: string; // owning data-turn-id — persistent source-jump anchor (§5.4)
   anchor: { kind: "dom"; locator: string };

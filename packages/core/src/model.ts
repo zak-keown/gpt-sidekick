@@ -14,6 +14,14 @@ export type TranscriptEvent = {
   messageId: string;
   role: Role;
   text: string; // canonical text — the substring space the Evidence Invariant checks
+  /**
+   * Stable conversation position from the provider's skeleton (for ChatGPT, the
+   * `data-turn-id` index — known up front, identical across capture passes).
+   * The store orders by this, NOT by insertion order, so a turn backfilled on a
+   * later pass (after an unstable pass) still sorts into its true place.
+   * Messages sharing a turn share a turnIndex; the store tiebreaks by capture order.
+   */
+  turnIndex: number;
   createdAt?: string;
   turnId?: string;
   anchor: { kind: "dom" | "file" | "transcript"; locator: string };

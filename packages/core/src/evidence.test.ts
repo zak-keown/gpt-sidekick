@@ -9,6 +9,7 @@ function record(text: string, messageId = "m1"): TranscriptRecord {
     messageId,
     role: "assistant",
     text,
+    turnIndex: 0,
     ordinal: 0,
     capturedAt: "2026-07-07T00:00:00Z",
     textHash: "h",
@@ -104,6 +105,26 @@ describe("validateOutline — the Evidence Invariant", () => {
     const { items, droppedNoEvidence } = validateOutline([c], RECORDS);
     expect(items).toEqual([]);
     expect(droppedNoEvidence).toBe(1);
+  });
+
+  it("rejects malformed offsets that JS slice would silently normalize (Codex high)", () => {
+    const phrase = "durable id";
+    const start = TEXT.indexOf(phrase);
+    const end = start + phrase.length;
+    const bad = [
+      candidate(phrase, -1, end), // negative start
+      candidate(phrase, start, TEXT.length + 5), // out of range end
+      candidate(phrase, 1.5, end), // fractional
+      candidate(phrase, Number.NaN, end), // NaN
+      candidate(phrase, end, start), // reversed
+      candidate("", start, start), // zero-length + empty quote
+      candidate("   ", start, start + 3), // whitespace-only quote
+    ];
+    for (const c of bad) {
+      const { items, droppedNoEvidence } = validateOutline([c], RECORDS);
+      expect(items).toEqual([]);
+      expect(droppedNoEvidence).toBe(1);
+    }
   });
 
   it("counts drops while keeping the valid items in a mixed batch", () => {

@@ -24,10 +24,17 @@ function evidenceHolds(
 ): boolean {
   const record = recordsById.get(evidence.messageId);
   if (!record) return false;
-  return (
-    record.text.slice(evidence.offsetStart, evidence.offsetEnd) ===
-    evidence.quote
-  );
+
+  const { offsetStart, offsetEnd, quote } = evidence;
+  // Validate the span explicitly — JS `slice` silently normalizes negative,
+  // fractional, NaN, and out-of-range indexes, so a malformed span could
+  // otherwise pass the equality check and break source-jump downstream.
+  if (!Number.isInteger(offsetStart) || !Number.isInteger(offsetEnd)) return false;
+  if (offsetStart < 0 || offsetEnd > record.text.length) return false;
+  if (offsetStart >= offsetEnd) return false; // reversed or zero-length
+  if (quote.trim().length === 0) return false; // whitespace-only isn't evidence
+
+  return record.text.slice(offsetStart, offsetEnd) === quote;
 }
 
 export function validateOutline(
