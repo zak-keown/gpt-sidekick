@@ -6,29 +6,62 @@ import { normalizeText } from "@gpt-sidekick/core/text";
 const CODE_OPEN = String.fromCharCode(0xe000);
 const CODE_CLOSE = String.fromCharCode(0xe001);
 
+// Block-level tags whose boundaries must become whitespace, so adjacent blocks
+// (<p>A</p><p>B</p>, list items, table cells) don't merge into "AB" under
+// textContent. INLINE tags (<a>, <strong>, inline <code>, <span>) are NOT here:
+// separating them would fragment words mid-sentence. NOTE: inline <code> falls
+// through to prose normalization (its internal spaces collapse) -- acceptable
+// for the spike; only fenced <pre> code is preserved verbatim.
+const BLOCK_TAGS: ReadonlySet<string> = new Set([
+  "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DD", "DIV", "DL", "DT",
+  "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6",
+  "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "SECTION", "TABLE",
+  "TBODY", "TD", "TFOOT", "TH", "THEAD", "TR", "UL",
+]);
+
+const TEXT_NODE = 3;
+const ELEMENT_NODE = 1;
+
+function walk(node: Node, out: string[], codes: string[]): void {
+  for (const child of node.childNodes) {
+    if (child.nodeType === TEXT_NODE) {
+      out.push(child.nodeValue ?? "");
+      continue;
+    }
+    if (child.nodeType !== ELEMENT_NODE) continue;
+
+    const el = child as Element;
+    if (el.tagName === "PRE") {
+      const index = codes.length;
+      codes.push(el.textContent ?? "");
+      out.push(" " + CODE_OPEN + index + CODE_CLOSE + " ");
+      continue;
+    }
+    if (el.tagName === "BR") {
+      out.push(" ");
+      continue;
+    }
+
+    const isBlock = BLOCK_TAGS.has(el.tagName);
+    if (isBlock) out.push(" ");
+    walk(el, out, codes);
+    if (isBlock) out.push(" ");
+  }
+}
+
 /**
  * Canonical text of a message content root (SPEC 5.3): prose whitespace is
  * normalized (via core normalizeText) so the Evidence Invariant's substring
  * test is stable, but <pre> code is copied VERBATIM -- collapsing its runs
- * would destroy the indentation/newlines the Code category depends on.
- *
- * Method: replace each <pre> with a sentinel token, normalize the remaining
- * prose, then substitute the verbatim code back at each token -- preserving
- * document order of prose and code.
+ * would destroy the indentation/newlines the Code category depends on. Block
+ * element boundaries become whitespace so adjacent blocks stay separated.
  */
 export function canonicalizeNode(root: Element): string {
-  const clone = root.cloneNode(true) as Element;
+  const out: string[] = [];
   const codes: string[] = [];
+  walk(root, out, codes);
 
-  for (const pre of clone.querySelectorAll("pre")) {
-    const index = codes.length;
-    codes.push(pre.textContent ?? "");
-    pre.replaceWith(
-      clone.ownerDocument.createTextNode(CODE_OPEN + index + CODE_CLOSE),
-    );
-  }
-
-  const normalized = normalizeText(clone.textContent ?? "");
+  const normalized = normalizeText(out.join(""));
   const tokenPattern = new RegExp(CODE_OPEN + "(\\d+)" + CODE_CLOSE, "g");
   return normalized
     .replace(tokenPattern, (_match, index: string) => `\n${codes[Number(index)] ?? ""}\n`)

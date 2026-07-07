@@ -176,6 +176,60 @@ describe("capture — edge cases", () => {
     expect(state.kind).toBe("complete");
   });
 
+  it("never emits an empty shell as text and does not count it complete (Codex high)", async () => {
+    // Simulates the live hydrator giving up on timeout, leaving an empty node.
+    const doc = new DOMParser().parseFromString(
+      `<div id="thread">
+        <article data-turn-id="t-shell">
+          <div data-message-id="ab-shell-4001-8001-000000000001" data-message-author-role="assistant">
+            <div data-message-content></div>
+          </div>
+        </article>
+      </div>`,
+      "text/html",
+    );
+    const giveUp = async () => {}; // hydrator resolved without painting
+    const { events, state } = await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: giveUp,
+    });
+    expect(events).toEqual([]);
+    expect(state).toEqual({
+      kind: "partial",
+      captured: 0,
+      expected: 1,
+      unstable: ["t-shell"],
+    });
+  });
+
+  it("keeps a painted sibling and skips the empty node in a partially-painted multi-node turn (Codex high)", async () => {
+    const doc = new DOMParser().parseFromString(
+      `<div id="thread">
+        <article data-turn-id="t-partial">
+          <div data-message-id="ab-answer-4001-8001-00000000000a" data-message-author-role="assistant">
+            <div data-message-content>the painted answer</div>
+          </div>
+          <div data-message-id="ab-empty-4001-8001-00000000000b" data-message-author-role="tool">
+            <div data-message-content></div>
+          </div>
+        </article>
+      </div>`,
+      "text/html",
+    );
+    const noop = async () => {};
+    const { events, state } = await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: noop,
+    });
+    // The answer survives; the empty tool shell is skipped, not emitted as "".
+    expect(events).toHaveLength(1);
+    expect(events[0]?.messageId).toBe("ab-answer-4001-8001-00000000000a");
+    expect(events[0]?.text).toBe("the painted answer");
+    expect(state).toEqual({ kind: "complete" }); // the turn yielded real content
+  });
+
   it("fails loudly when no turn skeleton matches (selectors rotted)", async () => {
     const doc = new DOMParser().parseFromString(
       `<div><p>no conversation turns here</p></div>`,

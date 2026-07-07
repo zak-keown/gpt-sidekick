@@ -68,29 +68,37 @@ export async function capture(opts: {
       await hydrateTurn(turn);
     }
 
-    const messageNodes = [...turn.querySelectorAll(anchors.message)];
     const turnId = turn.getAttribute(anchors.turnIdAttr) ?? "";
-    if (messageNodes.length === 0) {
-      unstable.push(turnId); // hydration failed — no durable source, but not silent
-      continue;
-    }
-    capturedTurns++;
 
-    for (const node of messageNodes) {
-      const messageId = node.getAttribute(anchors.messageIdAttr);
-      if (!messageId || seen.has(messageId)) continue; // dedup overlapping windows
-      seen.add(messageId);
+    // Compute canonical text per node BEFORE counting/emitting. Empty shells
+    // (a node mounted but not yet painted, or the hydrator gave up on timeout)
+    // are never emitted as text:"" — that would be false evidence. A painted
+    // sibling in a multi-node turn still survives: we skip the empty node, not
+    // the turn (dropping a real answer because a tool node is empty would be a
+    // worse, silent failure). A turn with zero non-empty messages is unstable.
+    let turnHasContent = false;
+    for (const node of turn.querySelectorAll(anchors.message)) {
+      const messageId = node.getAttribute(anchors.messageIdAttr) ?? "";
+      if (!messageId) continue;
       const contentRoot = node.querySelector(anchors.content) ?? node;
+      const text = canonicalizeNode(contentRoot as Element);
+      if (text.length === 0) continue; // empty shell — not evidence
+      turnHasContent = true;
+      if (seen.has(messageId)) continue; // dedup overlapping windows
+      seen.add(messageId);
       events.push({
         provider: "chatgpt",
         conversationId,
         messageId,
         role: normalizeRole(node.getAttribute(anchors.roleAttr)),
-        text: canonicalizeNode(contentRoot as Element),
+        text,
         turnId,
         anchor: { kind: "dom", locator: `[${anchors.messageIdAttr}="${messageId}"]` },
       });
     }
+
+    if (turnHasContent) capturedTurns++;
+    else unstable.push(turnId); // no non-empty message — surfaced, never silent
   }
 
   const expected = turns.length;
