@@ -6,7 +6,8 @@
  * pass over the persistent `data-turn-id` skeleton via an injected `hydrateTurn`.
  * The live content-script hydrator + targeted routing land in M1b (SPEC §13).
  */
-export { capture } from "./capture";
+export { capture, isHydrated } from "./capture";
+export { createLiveHydrator } from "./hydrate";
 export { anchors, AS_OF } from "./anchors";
 export { canonicalizeNode } from "./canonicalize";
 export type {

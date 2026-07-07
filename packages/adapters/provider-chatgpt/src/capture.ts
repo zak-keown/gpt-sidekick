@@ -18,6 +18,21 @@ function conversationIdFromUrl(url: string): string {
 }
 
 /**
+ * A turn is hydrated when it holds a `[data-message-id]` node with **non-empty
+ * canonical text** — presence alone is not enough (SPEC §5.2 step 2). The live
+ * virtualizer can mount a node a beat before its text paints; a presence-only
+ * signal would capture empty text. Shared by `capture` (skip condition) and the
+ * live hydrator (resolve condition) so both agree on "ready".
+ */
+export function isHydrated(turn: Element): boolean {
+  for (const node of turn.querySelectorAll(anchors.message)) {
+    const contentRoot = node.querySelector(anchors.content) ?? node;
+    if (canonicalizeNode(contentRoot as Element).length > 0) return true;
+  }
+  return false;
+}
+
+/**
  * Scroll-and-accumulate capture (SPEC §5.2). Walks the persistent `data-turn-id`
  * skeleton (its length N is the true conversation length, known up front); for
  * each turn, hydrates it if empty, then emits one `TranscriptEvent` per
@@ -49,7 +64,7 @@ export async function capture(opts: {
   let capturedTurns = 0;
 
   for (const turn of turns) {
-    if (!turn.querySelector(anchors.message)) {
+    if (!isHydrated(turn)) {
       await hydrateTurn(turn);
     }
 

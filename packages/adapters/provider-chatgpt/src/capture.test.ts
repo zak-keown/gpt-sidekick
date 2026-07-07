@@ -150,6 +150,32 @@ describe("capture — edge cases", () => {
     expect(events).toHaveLength(1);
   });
 
+  it("re-hydrates a turn whose node is present but text has not painted (isHydrated, not presence)", async () => {
+    // A presence-only skip condition would read this turn immediately and capture "".
+    const doc = new DOMParser().parseFromString(
+      `<div id="thread">
+        <article data-turn-id="t-empty">
+          <div data-message-id="m-empty-0001-4001-8001-000000000001" data-message-author-role="assistant">
+            <div data-message-content></div>
+          </div>
+        </article>
+      </div>`,
+      "text/html",
+    );
+    const paintLate = async (turn: Element) => {
+      const content = turn.querySelector("[data-message-content]");
+      if (content) content.textContent = "painted after mount";
+    };
+    const { events, state } = await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: paintLate,
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.text).toBe("painted after mount");
+    expect(state.kind).toBe("complete");
+  });
+
   it("fails loudly when no turn skeleton matches (selectors rotted)", async () => {
     const doc = new DOMParser().parseFromString(
       `<div><p>no conversation turns here</p></div>`,
