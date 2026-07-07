@@ -265,6 +265,33 @@ describe("capture — edge cases", () => {
     });
   });
 
+  it("treats an empty code block as not-yet-painted (unstable), not clean (Codex high)", async () => {
+    // Fencing an empty <pre> would read as non-empty and be captured as complete.
+    const doc = new DOMParser().parseFromString(
+      `<div id="thread">
+        <article data-turn-id="t-emptycode">
+          <div data-message-id="ab-ec-4001-8001-00000000000e" data-message-author-role="assistant">
+            <div data-message-content><pre><code></code></pre></div>
+          </div>
+        </article>
+      </div>`,
+      "text/html",
+    );
+    const noop = async () => {};
+    const { events, state } = await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: noop,
+    });
+    expect(events).toEqual([]);
+    expect(state).toEqual({
+      kind: "partial",
+      captured: 0,
+      expected: 1,
+      unstable: ["t-emptycode"],
+    });
+  });
+
   it("fails loudly when the conversation id can't be parsed from the URL (Codex high)", async () => {
     const doc = loadFixture(); // a full, valid turn skeleton...
     const { events, state } = await capture({

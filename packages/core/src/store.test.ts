@@ -6,6 +6,7 @@ function ev(
   messageId: string,
   text: string,
   turnIndex: number,
+  messageIndex = 0,
   role: Role = "assistant",
   conversationId = "c1",
 ): TranscriptEvent {
@@ -16,6 +17,7 @@ function ev(
     role,
     text,
     turnIndex,
+    messageIndex,
     anchor: { kind: "dom", locator: `[data-message-id="${messageId}"]` },
   };
 }
@@ -40,15 +42,17 @@ describe("InMemoryTranscriptStore", () => {
     expect(recs.map((r) => r.ordinal)).toEqual([0, 1, 2]);
   });
 
-  it("keeps multi-node turns (shared turnIndex) in capture order", async () => {
+  it("orders a multi-node turn by messageIndex even when a sibling is backfilled later (Codex high)", async () => {
     const store = new InMemoryTranscriptStore(() => "T");
-    // A tool->reasoning->answer turn: three messages, same turnIndex, captured together.
+    // Pass 1: only the answer painted (messageIndex 2); tool + reasoning unstable.
+    await store.upsertRecords([ev("answer", "a", 5, 2)]);
+    // Pass 2: backfill tool (0) and reasoning (1) — captured later, earlier in the turn.
     await store.upsertRecords([
-      ev("tool", "t", 5, "tool"),
-      ev("reason", "r", 5),
-      ev("answer", "a", 5),
+      ev("tool", "t", 5, 0, "tool"),
+      ev("reason", "r", 5, 1),
     ]);
     const recs = await store.getRecords("c1");
+    // Sorted by messageIndex, NOT capture order (which would give answer, tool, reason).
     expect(recs.map((r) => r.messageId)).toEqual(["tool", "reason", "answer"]);
   });
 
@@ -77,8 +81,8 @@ describe("InMemoryTranscriptStore", () => {
   it("keeps conversations separate", async () => {
     const store = new InMemoryTranscriptStore(() => "T");
     await store.upsertRecords([
-      ev("a", "one", 0, "user", "c1"),
-      ev("a", "other", 0, "user", "c2"),
+      ev("a", "one", 0, 0, "user", "c1"),
+      ev("a", "other", 0, 0, "user", "c2"),
     ]);
     expect((await store.getRecord("c1", "a"))?.text).toBe("one");
     expect((await store.getRecord("c2", "a"))?.text).toBe("other");

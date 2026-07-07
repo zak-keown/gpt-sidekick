@@ -13,6 +13,7 @@ export type TranscriptEvent = {
   role: Role;
   text: string; // canonical text (§5.3): prose normalized, code verbatim
   turnIndex: number; // position in the data-turn-id skeleton — stable across passes
+  messageIndex: number; // position within the turn (DOM order) — within-turn ordering
   createdAt?: string;
   turnId: string; // owning data-turn-id — persistent source-jump anchor (§5.4)
   anchor: { kind: "dom"; locator: string };

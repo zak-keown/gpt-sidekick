@@ -86,7 +86,9 @@ export async function capture(opts: {
     // — never silently reported complete with partial or chrome-polluted text.
     let messageCount = 0;
     let cleanCount = 0;
-    for (const node of turn.querySelectorAll(anchors.message)) {
+    for (const [messageIndex, node] of [
+      ...turn.querySelectorAll(anchors.message),
+    ].entries()) {
       const messageId = node.getAttribute(anchors.messageIdAttr) ?? "";
       if (!messageId) continue;
       messageCount++;
@@ -112,6 +114,7 @@ export async function capture(opts: {
         role: normalizeRole(node.getAttribute(anchors.roleAttr)),
         text,
         turnIndex, // skeleton position — stable across passes, for backfill-safe ordering
+        messageIndex, // DOM position within the turn — stable within-turn order
         turnId,
         anchor: { kind: "dom", locator: `[${anchors.messageIdAttr}="${messageId}"]` },
       });

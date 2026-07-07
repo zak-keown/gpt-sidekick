@@ -13,6 +13,7 @@ function rec(text: string, role: Role = "assistant"): TranscriptRecord {
     role,
     text,
     turnIndex: seq,
+    messageIndex: 0,
     ordinal: seq,
     capturedAt: "2026-07-07T00:00:00Z",
     textHash: "h",

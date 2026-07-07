@@ -13,6 +13,7 @@ function ev(messageId: string, text: string, role: Role = "assistant"): Transcri
     role,
     text,
     turnIndex: seq++,
+    messageIndex: 0,
     anchor: { kind: "dom", locator: `[data-message-id="${messageId}"]` },
   };
 }

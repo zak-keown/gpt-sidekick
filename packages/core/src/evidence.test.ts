@@ -10,6 +10,7 @@ function record(text: string, messageId = "m1"): TranscriptRecord {
     role: "assistant",
     text,
     turnIndex: 0,
+    messageIndex: 0,
     ordinal: 0,
     capturedAt: "2026-07-07T00:00:00Z",
     textHash: "h",

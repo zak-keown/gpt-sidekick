@@ -45,6 +45,11 @@ describe("canonicalizeNode — block boundaries (Codex medium)", () => {
 });
 
 describe("canonicalizeNode — code preservation", () => {
+  it("does not fence an empty code body (would read as false non-empty content)", () => {
+    expect(canonicalizeNode(root("<pre><code></code></pre>"))).toBe("");
+    expect(canonicalizeNode(root("<p>see</p><pre><code></code></pre>"))).toBe("see");
+  });
+
   it("preserves <pre> code verbatim while separating surrounding prose", () => {
     const out = canonicalizeNode(
       root("<p>Before</p><pre><code>x = 1\n    y = 2</code></pre><p>After</p>"),

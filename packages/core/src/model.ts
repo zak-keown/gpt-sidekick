@@ -19,9 +19,16 @@ export type TranscriptEvent = {
    * `data-turn-id` index — known up front, identical across capture passes).
    * The store orders by this, NOT by insertion order, so a turn backfilled on a
    * later pass (after an unstable pass) still sorts into its true place.
-   * Messages sharing a turn share a turnIndex; the store tiebreaks by capture order.
+   * Messages sharing a turn share a turnIndex; `messageIndex` orders them.
    */
   turnIndex: number;
+  /**
+   * Stable position of this message WITHIN its turn (DOM order for ChatGPT).
+   * Primary tiebreak under a shared turnIndex, so a multi-node sibling
+   * backfilled on a later pass still sorts into its true within-turn place
+   * rather than after whatever was captured first.
+   */
+  messageIndex: number;
   createdAt?: string;
   turnId?: string;
   anchor: { kind: "dom" | "file" | "transcript"; locator: string };

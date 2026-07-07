@@ -64,11 +64,14 @@ export function canonicalizeNode(root: Element): string {
   const normalized = normalizeText(out.join(""));
   const tokenPattern = new RegExp(CODE_OPEN + "(\\d+)" + CODE_CLOSE, "g");
   // Re-fence code so canonical text is faithful markdown AND the extractor can
-  // detect code blocks (```...```). The verbatim body is unchanged.
+  // detect code blocks (```...```). The verbatim body is unchanged. An EMPTY
+  // code body contributes nothing — fencing it would make an unpainted
+  // <pre><code></code></pre> read as non-empty and defeat the hydration/emit
+  // guard, persisting an empty fenced block as if it were captured (Codex).
   return normalized
-    .replace(
-      tokenPattern,
-      (_match, index: string) => "\n```\n" + (codes[Number(index)] ?? "") + "\n```\n",
-    )
+    .replace(tokenPattern, (_match, index: string) => {
+      const code = codes[Number(index)] ?? "";
+      return code.trim().length === 0 ? "" : "\n```\n" + code + "\n```\n";
+    })
     .trim();
 }
