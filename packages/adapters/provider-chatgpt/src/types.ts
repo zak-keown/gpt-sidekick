@@ -21,6 +21,6 @@ export type TranscriptEvent = {
 export type CaptureState =
   | { kind: "complete" }
   | { kind: "partial"; captured: number; expected: number; unstable: string[] }
-  | { kind: "failed"; reason: "no-messages-matched" };
+  | { kind: "failed"; reason: "no-messages-matched" | "no-conversation-id" };
 
 export type CaptureResult = { events: TranscriptEvent[]; state: CaptureState };

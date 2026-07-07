@@ -13,8 +13,8 @@ function normalizeRole(raw: string | null): Role {
   return raw && ROLES.has(raw) ? (raw as Role) : "assistant";
 }
 
-function conversationIdFromUrl(url: string): string {
-  return url.match(/\/c\/([^/?#]+)/)?.[1] ?? "unknown";
+function conversationIdFromUrl(url: string): string | null {
+  return url.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
 }
 
 /**
@@ -52,12 +52,19 @@ export async function capture(opts: {
 }): Promise<CaptureResult> {
   const { root, url, hydrateTurn } = opts;
 
+  // Conversation identity is the durable key ([conversationId+messageId]); a
+  // bad/absent id would co-mingle distinct chats. Fail loudly, never bucket
+  // into a shared "unknown" (Codex).
+  const conversationId = conversationIdFromUrl(url);
+  if (conversationId === null) {
+    return { events: [], state: { kind: "failed", reason: "no-conversation-id" } };
+  }
+
   const turns = [...root.querySelectorAll(anchors.turn)];
   if (turns.length === 0) {
     return { events: [], state: { kind: "failed", reason: "no-messages-matched" } };
   }
 
-  const conversationId = conversationIdFromUrl(url);
   const events: TranscriptEvent[] = [];
   const seen = new Set<string>();
   const unstable: string[] = [];
@@ -84,14 +91,18 @@ export async function capture(opts: {
       if (!messageId) continue;
       messageCount++;
 
+      // Fail CLOSED on a missing content-root anchor: canonicalizing the whole
+      // node would pull in chrome/buttons, and an emitted polluted event could
+      // feed extraction/storage and let the Evidence Invariant pass against
+      // garbage. Emit nothing for it; the turn is flagged unstable below. If the
+      // anchor has rotted, the whole pass goes unstable + empty — a loud
+      // fix-the-selector signal, not silent pollution (Codex).
       const contentRoot = node.querySelector(anchors.content);
-      // Fall back to the whole node so a missing content-root anchor still
-      // captures best-effort text, but do NOT count that node clean (the text
-      // may include chrome/buttons) — the turn is flagged instead.
-      const text = canonicalizeNode((contentRoot ?? node) as Element);
-      if (contentRoot && text.length > 0) cleanCount++;
+      if (!contentRoot) continue;
+      const text = canonicalizeNode(contentRoot as Element);
+      if (text.length === 0) continue; // empty shell — not evidence
+      cleanCount++;
 
-      if (text.length === 0) continue; // never emit empty text as evidence
       if (seen.has(messageId)) continue; // dedup overlapping windows
       seen.add(messageId);
       events.push({

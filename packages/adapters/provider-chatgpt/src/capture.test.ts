@@ -250,18 +250,31 @@ describe("capture — edge cases", () => {
       "text/html",
     );
     const noop = async () => {};
-    const { state } = await capture({
+    const { events, state } = await capture({
       root: doc,
       url: FIXTURE_URL,
       hydrateTurn: noop,
     });
-    // Best-effort captured, but surfaced as not-clean rather than silently complete.
+    // Fail closed: no polluted whole-node event is emitted; the turn is flagged.
+    expect(events).toEqual([]);
     expect(state).toEqual({
       kind: "partial",
       captured: 0,
       expected: 1,
       unstable: ["t-nocontent"],
     });
+  });
+
+  it("fails loudly when the conversation id can't be parsed from the URL (Codex high)", async () => {
+    const doc = loadFixture(); // a full, valid turn skeleton...
+    const { events, state } = await capture({
+      root: doc,
+      url: "https://chatgpt.com/", // ...but no /c/<id> to identify the conversation
+      hydrateTurn: makeHydrator(doc),
+    });
+    // No events bucketed under a shared "unknown" id — distinct chats must not co-mingle.
+    expect(events).toEqual([]);
+    expect(state).toEqual({ kind: "failed", reason: "no-conversation-id" });
   });
 
   it("fails loudly when no turn skeleton matches (selectors rotted)", async () => {
