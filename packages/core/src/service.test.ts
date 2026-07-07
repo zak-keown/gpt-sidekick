@@ -1,37 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { createRpc, type Envelope, type Rpc, type Transport } from "./protocol";
 import { InMemoryTranscriptStore } from "./store";
 import { RulesExtractor } from "./extractor";
 import {
-  fetchOutline,
-  fetchRecord,
-  fetchRecords,
-  pushTranscript,
+  SERVICE_KINDS,
   registerStoreService,
+  type PushResult,
+  type StoreServiceHost,
 } from "./service";
-import type { TranscriptEvent } from "./model";
+import type { Address } from "./router";
+import type { TranscriptEvent, TranscriptRecord } from "./model";
 
-/** A transport that feeds a single rpc its own messages — so `request` reaches
- *  the `handle`r on the same instance. `Promise.resolve()` (not queueMicrotask,
- *  which core's DOM-free lib lacks) drains the reply on the microtask queue. */
-function loopback(): Transport {
-  let listener: ((e: Envelope) => void) | undefined;
+type Pushed = { target: Address; kind: string; payload: unknown };
+
+/** A test double for the SW's routing host: captures handlers + pushes and lets
+ *  a test invoke a handler with an attested `source`. */
+function fakeHost() {
+  const handlers = new Map<
+    string,
+    (payload: unknown, source: Address) => unknown | Promise<unknown>
+  >();
+  const pushes: Pushed[] = [];
+  const host: StoreServiceHost = {
+    handle: (kind, fn) => handlers.set(kind, fn),
+    push: (target, kind, payload) => pushes.push({ target, kind, payload }),
+  };
   return {
-    send: (e) => {
-      void Promise.resolve().then(() => listener?.(e));
-    },
-    onMessage: (l) => {
-      listener = l;
+    host,
+    pushes,
+    async call(kind: string, payload: unknown, source: Address): Promise<unknown> {
+      const fn = handlers.get(kind);
+      if (!fn) throw new Error(`no handler for ${kind}`);
+      return fn(payload, source);
     },
   };
 }
 
-function serviceRpc(store = new InMemoryTranscriptStore(() => "T")): Rpc {
-  let n = 0;
-  const rpc = createRpc(loopback(), { newId: () => `id-${n++}` });
-  registerStoreService(rpc, store, RulesExtractor);
-  return rpc;
-}
+const content = (tabId: number): Address => ({ context: "content", tabId });
+const panel = (tabId: number): Address => ({ context: "panel", tabId });
+const SW: Address = { context: "sw" };
 
 /** An assistant turn whose fenced code block reliably yields one Code item. */
 const codeEvent = (messageId: string, turnIndex: number): TranscriptEvent => ({
@@ -45,43 +51,72 @@ const codeEvent = (messageId: string, turnIndex: number): TranscriptEvent => ({
   anchor: { kind: "dom", locator: `[data-message-id="${messageId}"]` },
 });
 
-describe("store service over RPC — the SW-owned pipeline", () => {
-  it("upserts, indexes, and returns counts consistent with the stored outline", async () => {
-    const rpc = serviceRpc();
-    const result = await pushTranscript(rpc, [codeEvent("m1", 0)]);
+describe("store service — SW-owned pipeline, source-aware", () => {
+  it("indexes a push, notifies the pushing tab's panel, and maps tab→conversation", async () => {
+    const store = new InMemoryTranscriptStore(() => "T");
+    const h = fakeHost();
+    registerStoreService(h.host, store, RulesExtractor);
+
+    const result = (await h.call(
+      SERVICE_KINDS.push,
+      { events: [codeEvent("m1", 0)] },
+      content(7),
+    )) as PushResult;
 
     expect(result.messages).toBe(1);
     expect(result.written).toBe(true);
-    expect(result.items).toBeGreaterThanOrEqual(1); // the fenced block became an item
-    const outline = await fetchOutline(rpc, "c1");
+    expect(result.items).toBeGreaterThanOrEqual(1);
+
+    // Piece 1: the SW pushed a change notice to the SAME tab's panel.
+    expect(h.pushes).toContainEqual({
+      target: panel(7),
+      kind: SERVICE_KINDS.changed,
+      payload: { conversationId: "c1" },
+    });
+
+    // Piece 2: the panel can now learn which conversation its tab shows.
+    expect(await h.call(SERVICE_KINDS.conversation, {}, panel(7))).toBe("c1");
+
+    // And the outline is fetchable by that conversationId.
+    const outline = (await h.call(
+      SERVICE_KINDS.outline,
+      { conversationId: "c1" },
+      SW,
+    )) as unknown[];
     expect(outline).toHaveLength(result.items);
   });
 
-  it("serves a single record for source-jump, null when absent", async () => {
-    const rpc = serviceRpc();
-    await pushTranscript(rpc, [codeEvent("m1", 0)]);
+  it("does not notify or map for a push from a non-content source", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
 
-    expect((await fetchRecord(rpc, "c1", "m1"))?.messageId).toBe("m1");
-    expect(await fetchRecord(rpc, "c1", "missing")).toBeNull();
+    await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, SW);
+
+    expect(h.pushes).toHaveLength(0);
+    expect(await h.call(SERVICE_KINDS.conversation, {}, panel(7))).toBeNull();
   });
 
-  it("returns records in conversation order regardless of push order", async () => {
-    const rpc = serviceRpc();
-    await pushTranscript(rpc, [codeEvent("m2", 1), codeEvent("m1", 0)]);
+  it("returns null conversation for a tab that has not pushed", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
 
-    const recs = await fetchRecords(rpc, "c1");
-    expect(recs.map((r) => r.messageId)).toEqual(["m1", "m2"]);
+    expect(await h.call(SERVICE_KINDS.conversation, {}, panel(99))).toBeNull();
   });
 
-  it("is idempotent across re-pushes of a grown conversation", async () => {
-    const rpc = serviceRpc();
-    await pushTranscript(rpc, [codeEvent("m1", 0)]);
-    const second = await pushTranscript(rpc, [codeEvent("m1", 0), codeEvent("m2", 1)]);
+  it("serves a source-jump record and null when absent", async () => {
+    const store = new InMemoryTranscriptStore(() => "T");
+    const h = fakeHost();
+    registerStoreService(h.host, store, RulesExtractor);
+    await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, content(7));
 
-    expect(second.messages).toBe(2);
-    expect((await fetchRecords(rpc, "c1")).map((r) => r.messageId)).toEqual([
-      "m1",
-      "m2",
-    ]);
+    const rec = (await h.call(
+      SERVICE_KINDS.record,
+      { conversationId: "c1", messageId: "m1" },
+      SW,
+    )) as TranscriptRecord | null;
+    expect(rec?.messageId).toBe("m1");
+    expect(
+      await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "x" }, SW),
+    ).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { createChromeRpc } from "@gpt-sidekick/adapter-host-chrome";
 import { createSwPortRouter } from "@gpt-sidekick/adapter-host-chrome/router";
-import { createSwRoutedRpc } from "@gpt-sidekick/adapter-host-chrome/routed-rpc";
+import { createSwService } from "@gpt-sidekick/adapter-host-chrome/routed-rpc";
 import { registerStoreService } from "@gpt-sidekick/core/service";
 import { RulesExtractor } from "@gpt-sidekick/core/extractor";
 import { DexieTranscriptStore } from "@gpt-sidekick/adapter-storage-dexie";
@@ -21,8 +21,8 @@ export default defineBackground(() => {
   // proves it loads in the built extension. Echo stays on broadcast (a public
   // string), keeping the M0 panel⇄SW e2e round-trip untouched.
   const router = createSwPortRouter();
-  const swRpc = createSwRoutedRpc(router);
-  registerStoreService(swRpc, new DexieTranscriptStore(), RulesExtractor);
+  const service = createSwService(router);
+  registerStoreService(service, new DexieTranscriptStore(), RulesExtractor);
 
   // Open the side panel when the toolbar action is clicked (manual check
   // path on chatgpt.com; the e2e drives the panel page by URL instead).

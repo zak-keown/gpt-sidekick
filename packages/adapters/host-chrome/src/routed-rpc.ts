@@ -1,28 +1,28 @@
 import {
+  buildErrorReply,
+  buildReply,
   createRpc,
+  REPLY_SUFFIX,
   type Envelope,
   type Rpc,
   type Transport,
 } from "@gpt-sidekick/core/protocol";
-import type {
-  Address,
-  Link,
-  Router,
-} from "@gpt-sidekick/core/router";
+import type { Address, Link, Router } from "@gpt-sidekick/core/router";
+import type { StoreServiceHost } from "@gpt-sidekick/core/service";
 import { CONTENT_PORT, PANEL_PORT } from "./router-port";
 
 /**
- * Correlation-ID RPC over the §13 targeted router.
+ * Content-bearing transport over the §13 targeted router — the payload path the
+ * M0 broadcast `createChromeRpc` explicitly must NOT carry (see transport.ts).
  *
- * `connectRouted` gives a content script or side panel an `Rpc` whose every call
- * is relayed by the SW to only its addressed endpoint (never broadcast); it
- * inherits the M0 RPC correctness (unique ids, timeout) on top of the router's
- * attested/firewalled delivery. `createSwRoutedRpc` is the SW's side: it handles
- * routed requests and sends each reply back to exactly the source that issued it.
+ * `connectRouted` gives a content script or side panel an `Rpc` relayed by the
+ * SW to only its addressed endpoint (never broadcast), inheriting the M0 RPC
+ * correctness on top of the router's attested/firewalled delivery.
  *
- * This is the content-bearing transport the M0 broadcast `createChromeRpc`
- * explicitly must NOT carry (see transport.ts) — transcript/outline/source-jump
- * payloads ride here.
+ * `createSwService` is the SW's side. Unlike a plain `Rpc`, its handlers receive
+ * the Chrome-attested `source` (so the store service can notify the right tab's
+ * panel and map tab→conversation), and it can `push` a one-way notification to a
+ * target. A single `swLink` backs both, so a request to `sw` is delivered once.
  */
 
 const SW: Address = { context: "sw" };
@@ -86,37 +86,57 @@ export function connectRouted(
 
 /**
  * The service-worker side of the routed RPC. Registers an SW endpoint on the
- * router and returns an `Rpc` to `handle(...)` on (e.g. via
+ * router and returns a `StoreServiceHost` to bind handlers on (via
  * `registerStoreService`). Requests arrive already routed (attested source,
- * firewalled); each reply is sent back to whichever source issued the matching
- * request, correlated by envelope id — so concurrent callers never cross replies.
+ * firewalled); each reply is sent straight back to the source that issued it —
+ * the source is captured per delivery, so concurrent callers never cross replies.
+ * A throwing handler becomes an error reply (async-wrapped), never a throw out of
+ * the router's synchronous delivery loop.
  */
-export function createSwRoutedRpc(router: Router): Rpc {
-  const replyTarget = new Map<string, Address>();
-  let deliverToRpc: ((envelope: Envelope) => void) | undefined;
+export function createSwService(router: Router): StoreServiceHost {
+  const handlers = new Map<
+    string,
+    (payload: unknown, source: Address) => unknown | Promise<unknown>
+  >();
 
   const swLink: Link = {
     attested: SW,
     deliver: (routed) => {
-      // Remember where a request came from so its reply routes back there.
-      if (!routed.envelope.kind.endsWith(":reply")) {
-        replyTarget.set(routed.envelope.id, routed.source);
-      }
-      deliverToRpc?.(routed.envelope);
+      const env = routed.envelope;
+      if (env.kind.endsWith(REPLY_SUFFIX)) return; // the SW consumes no replies
+      const handler = handlers.get(env.kind);
+      if (!handler) return;
+      const source = routed.source; // attested; captured for this delivery only
+      void Promise.resolve()
+        .then(() => handler(env.payload, source))
+        .then(
+          (reply) =>
+            router.route(swLink, {
+              source: SW,
+              target: source,
+              envelope: buildReply(env.id, env.kind, reply),
+            }),
+          (err) =>
+            router.route(swLink, {
+              source: SW,
+              target: source,
+              envelope: buildErrorReply(env.id, env.kind, err),
+            }),
+        );
     },
   };
   router.addLink(swLink);
 
-  const transport: Transport = {
-    send: (envelope) => {
-      const target = replyTarget.get(envelope.id);
-      replyTarget.delete(envelope.id);
-      if (target) router.route(swLink, { source: SW, target, envelope });
+  return {
+    handle: (kind, fn) => {
+      handlers.set(kind, fn);
     },
-    onMessage: (listener) => {
-      deliverToRpc = listener;
+    push: (target, kind, payload) => {
+      router.route(swLink, {
+        source: SW,
+        target,
+        envelope: { id: crypto.randomUUID(), kind, payload },
+      });
     },
   };
-
-  return createRpc(transport, timerOptions);
 }

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createSwPortRouter } from "./router-port";
-import { connectRouted, createSwRoutedRpc } from "./routed-rpc";
+import { connectRouted, createSwService } from "./routed-rpc";
+import { InMemoryTranscriptStore } from "@gpt-sidekick/core/store";
+import { RulesExtractor } from "@gpt-sidekick/core/extractor";
+import {
+  fetchConversationId,
+  fetchOutline,
+  onOutlineChanged,
+  pushTranscript,
+  registerStoreService,
+} from "@gpt-sidekick/core/service";
+import type { Address } from "@gpt-sidekick/core/router";
+import type { TranscriptEvent } from "@gpt-sidekick/core/model";
 
 const EXT_ID = "ext-id";
 
@@ -56,7 +67,6 @@ function fakeChrome() {
         return client as unknown as chrome.runtime.Port;
       },
     },
-    /** Attribute the SW-side sender for connects made inside `fn`. */
     connectAs<T>(sender: chrome.runtime.MessageSender, fn: () => T): T {
       nextSender = sender;
       try {
@@ -73,18 +83,32 @@ const contentSender = (tabId: number): chrome.runtime.MessageSender => ({
   tab: { id: tabId } as chrome.tabs.Tab,
 });
 const panelSender = (): chrome.runtime.MessageSender => ({ id: EXT_ID });
+const panel = (tabId: number): Address => ({ context: "panel", tabId });
 
-function setup() {
+const codeEvent = (messageId: string, turnIndex: number): TranscriptEvent => ({
+  provider: "chatgpt",
+  conversationId: "c1",
+  messageId,
+  role: "assistant",
+  text: "Here is the fix:\n```\nconst x = 1;\n```\n",
+  turnIndex,
+  messageIndex: 0,
+  anchor: { kind: "dom", locator: `[data-message-id="${messageId}"]` },
+});
+
+/** SW router + service echoing back its request payload and attested source. */
+function pingSetup() {
   const fc = fakeChrome();
   const router = createSwPortRouter(fc.runtime);
-  const swRpc = createSwRoutedRpc(router);
-  swRpc.handle("ping", (payload) => ({ pong: payload }));
-  return fc;
+  const svc = createSwService(router);
+  svc.handle("ping", (payload) => ({ pong: payload }));
+  svc.handle("whoami", (_payload, source) => source);
+  return { fc, svc, router };
 }
 
-describe("routed RPC end to end — client ⇄ SW router ⇄ handler", () => {
+describe("routed RPC / SW service — client ⇄ router ⇄ source-aware handler", () => {
   it("round-trips a content request through the SW router", async () => {
-    const fc = setup();
+    const { fc } = pingSetup();
     const rpc = fc.connectAs(contentSender(7), () =>
       connectRouted({ context: "content" }, fc.runtime),
     );
@@ -92,27 +116,83 @@ describe("routed RPC end to end — client ⇄ SW router ⇄ handler", () => {
   });
 
   it("round-trips a panel request after its hello handshake", async () => {
-    const fc = setup();
+    const { fc } = pingSetup();
     const rpc = fc.connectAs(panelSender(), () =>
       connectRouted({ context: "panel", tabId: 7 }, fc.runtime),
     );
     expect(await rpc.request("ping", "yo")).toEqual({ pong: "yo" });
   });
 
-  it("routes each reply to its own caller when two are connected (id correlation)", async () => {
-    const fc = setup();
+  it("routes each reply to its own caller when two are connected (correlation)", async () => {
+    const { fc } = pingSetup();
     const content = fc.connectAs(contentSender(7), () =>
       connectRouted({ context: "content" }, fc.runtime),
     );
-    const panel = fc.connectAs(panelSender(), () =>
+    const panel3 = fc.connectAs(panelSender(), () =>
       connectRouted({ context: "panel", tabId: 3 }, fc.runtime),
     );
-
     const [a, b] = await Promise.all([
       content.request("ping", "seven"),
-      panel.request("ping", "three"),
+      panel3.request("ping", "three"),
     ]);
     expect(a).toEqual({ pong: "seven" });
     expect(b).toEqual({ pong: "three" });
+  });
+
+  it("gives handlers the Chrome-attested source, not the caller's claim", async () => {
+    const { fc } = pingSetup();
+    const rpc = fc.connectAs(contentSender(7), () =>
+      connectRouted({ context: "content" }, fc.runtime),
+    );
+    expect(await rpc.request("whoami", null)).toEqual({ context: "content", tabId: 7 });
+  });
+
+  it("pushes a one-way notification from the SW to a specific panel", async () => {
+    const { fc, svc } = pingSetup();
+    const panelRpc = fc.connectAs(panelSender(), () =>
+      connectRouted({ context: "panel", tabId: 7 }, fc.runtime),
+    );
+    let resolve: (v: unknown) => void;
+    const got = new Promise((r) => (resolve = r));
+    panelRpc.handle("notify", (payload) => resolve(payload));
+
+    svc.push(panel(7), "notify", { hello: "world" });
+
+    expect(await got).toEqual({ hello: "world" });
+  });
+
+  it("does not throw the router loop when a handler rejects (error reply)", async () => {
+    const { fc, svc } = pingSetup();
+    svc.handle("boom", () => {
+      throw new Error("kaboom");
+    });
+    const rpc = fc.connectAs(contentSender(7), () =>
+      connectRouted({ context: "content" }, fc.runtime),
+    );
+    await expect(rpc.request("boom", null)).rejects.toThrow("kaboom");
+  });
+
+  it("end to end: content push → index → SW notifies the panel → panel fetches outline", async () => {
+    const fc = fakeChrome();
+    const router = createSwPortRouter(fc.runtime);
+    const svc = createSwService(router);
+    registerStoreService(svc, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
+
+    const panelRpc = fc.connectAs(panelSender(), () =>
+      connectRouted({ context: "panel", tabId: 7 }, fc.runtime),
+    );
+    let resolveChanged: (cid: string) => void;
+    const changed = new Promise<string>((r) => (resolveChanged = r));
+    onOutlineChanged(panelRpc, (cid) => resolveChanged(cid));
+
+    const contentRpc = fc.connectAs(contentSender(7), () =>
+      connectRouted({ context: "content" }, fc.runtime),
+    );
+    const result = await pushTranscript(contentRpc, [codeEvent("m1", 0)]);
+    expect(result.items).toBeGreaterThanOrEqual(1);
+
+    expect(await changed).toBe("c1"); // the panel for tab 7 was notified
+    expect(await fetchConversationId(panelRpc)).toBe("c1");
+    expect(await fetchOutline(panelRpc, "c1")).toHaveLength(result.items);
   });
 });
