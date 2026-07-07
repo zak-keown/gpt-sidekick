@@ -145,6 +145,17 @@ describe("createSwPortRouter — chrome ports bound to the pure router", () => {
     expect(weird.disconnected).toBe(true);
   });
 
+  it("rejects a PANEL_PORT connection that carries an attested tab (content masquerade)", () => {
+    const rt = fakeRuntime();
+    createSwPortRouter(rt.runtime);
+    // A content script can open a panel-named port; Chrome still sets sender.tab.
+    // A real panel is a tab-less extension page, so an attested tab here means a
+    // content script trying to mint a panel@<claimed tab> identity — reject it.
+    const masquerade = new FakePort(PANEL, contentSender(7));
+    rt.connect(masquerade);
+    expect(masquerade.disconnected).toBe(true);
+  });
+
   it("disconnects a panel whose first message is not a valid hello", () => {
     const rt = fakeRuntime();
     createSwPortRouter(rt.runtime);

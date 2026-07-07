@@ -77,11 +77,11 @@ describe("store service — SW-owned pipeline, source-aware", () => {
     // Piece 2: the panel can now learn which conversation its tab shows.
     expect(await h.call(SERVICE_KINDS.conversation, {}, panel(7))).toBe("c1");
 
-    // And the outline is fetchable by that conversationId.
+    // And the owning tab's panel can fetch the outline for that conversation.
     const outline = (await h.call(
       SERVICE_KINDS.outline,
       { conversationId: "c1" },
-      SW,
+      panel(7),
     )) as unknown[];
     expect(outline).toHaveLength(result.items);
   });
@@ -112,11 +112,42 @@ describe("store service — SW-owned pipeline, source-aware", () => {
     const rec = (await h.call(
       SERVICE_KINDS.record,
       { conversationId: "c1", messageId: "m1" },
-      SW,
+      panel(7),
     )) as TranscriptRecord | null;
     expect(rec?.messageId).toBe("m1");
     expect(
-      await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "x" }, SW),
+      await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "x" }, panel(7)),
     ).toBeNull();
+  });
+
+  // Codex round (2026-07-07): targeted delivery doesn't cover reads — every
+  // context may address the SW — so reads must be authorized against the
+  // attested source, or a client can read another tab's conversation by id.
+  describe("read authorization — the §13 tenant boundary for reads", () => {
+    async function seededOnTab7() {
+      const store = new InMemoryTranscriptStore(() => "T");
+      const h = fakeHost();
+      registerStoreService(h.host, store, RulesExtractor);
+      await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, content(7));
+      return h;
+    }
+
+    it("denies a panel reading a conversation its tab does not own", async () => {
+      const h = await seededOnTab7();
+      // panel@8 knows c1's id but its tab (8) is not mapped to c1.
+      expect(await h.call(SERVICE_KINDS.outline, { conversationId: "c1" }, panel(8))).toEqual([]);
+      expect(await h.call(SERVICE_KINDS.records, { conversationId: "c1" }, panel(8))).toEqual([]);
+      expect(
+        await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "m1" }, panel(8)),
+      ).toBeNull();
+    });
+
+    it("denies a content script reading conversation data at all", async () => {
+      const h = await seededOnTab7();
+      expect(await h.call(SERVICE_KINDS.outline, { conversationId: "c1" }, content(7))).toEqual([]);
+      expect(
+        await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "m1" }, content(7)),
+      ).toBeNull();
+    });
   });
 });

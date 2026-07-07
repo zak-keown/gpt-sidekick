@@ -129,6 +129,14 @@ export function createSwPortRouter(
     }
 
     if (port.name === PANEL_PORT) {
+      // A real side panel is a tab-less extension page. A content script can also
+      // open a PANEL_PORT connection, but Chrome sets its `sender.tab` — so an
+      // attested tab on the panel path is a content script trying to mint a
+      // panel@<claimed tab> identity for another tab. Reject it. (Codex, 2026-07-07.)
+      if (port.sender?.tab !== undefined) {
+        port.disconnect();
+        return;
+      }
       bindPanelLink(router, port);
       return;
     }

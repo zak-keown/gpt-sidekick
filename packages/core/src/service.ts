@@ -106,20 +106,33 @@ export function registerStoreService(
     return { messages: events.length, items, droppedNoEvidence, written } satisfies PushResult;
   });
 
+  // Read authorization — the §13 tenant boundary for READS. Targeted delivery
+  // stops a client from *addressing* another tab's panel, but every context may
+  // address the SW, so the read handlers themselves must scope by the attested
+  // source: a panel may read ONLY the conversation its own tab is showing.
+  // Without this, a panel that knows another tab's conversationId could fetch its
+  // transcript. Content scripts do not read at all. (Codex, 2026-07-07.)
+  const canRead = (source: Address, conversationId: string): boolean =>
+    source.context === "panel" &&
+    tabConversation.get(source.tabId) === conversationId;
+
   host.handle(SERVICE_KINDS.conversation, (_payload, source) =>
     source.context === "panel" ? (tabConversation.get(source.tabId) ?? null) : null,
   );
 
-  host.handle(SERVICE_KINDS.outline, (payload) =>
-    store.getOutline((payload as ConversationPayload).conversationId),
-  );
+  host.handle(SERVICE_KINDS.outline, (payload, source) => {
+    const { conversationId } = payload as ConversationPayload;
+    return canRead(source, conversationId) ? store.getOutline(conversationId) : [];
+  });
 
-  host.handle(SERVICE_KINDS.records, (payload) =>
-    store.getRecords((payload as ConversationPayload).conversationId),
-  );
+  host.handle(SERVICE_KINDS.records, (payload, source) => {
+    const { conversationId } = payload as ConversationPayload;
+    return canRead(source, conversationId) ? store.getRecords(conversationId) : [];
+  });
 
-  host.handle(SERVICE_KINDS.record, async (payload) => {
+  host.handle(SERVICE_KINDS.record, async (payload, source) => {
     const { conversationId, messageId } = payload as RecordPayload;
+    if (!canRead(source, conversationId)) return null;
     // Normalise `undefined` to `null` so a missing record survives the JSON
     // round-trip of a real transport as a present-but-empty reply.
     return (await store.getRecord(conversationId, messageId)) ?? null;
