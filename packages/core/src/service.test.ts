@@ -4,6 +4,8 @@ import { RulesExtractor } from "./extractor";
 import {
   SERVICE_KINDS,
   registerStoreService,
+  type IndexingState,
+  type JumpRequestResult,
   type PushResult,
   type StoreServiceHost,
 } from "./service";
@@ -118,6 +120,102 @@ describe("store service — SW-owned pipeline, source-aware", () => {
     expect(
       await h.call(SERVICE_KINDS.record, { conversationId: "c1", messageId: "x" }, panel(7)),
     ).toBeNull();
+  });
+
+  it("routes an authorized re-index request only to the matching content tab", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
+    await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, content(7));
+    h.pushes.length = 0;
+
+    expect(await h.call(SERVICE_KINDS.reindex, {}, panel(7))).toEqual({ accepted: true });
+    expect(h.pushes).toEqual([
+      { target: content(7), kind: SERVICE_KINDS.reindexRequested, payload: {} },
+    ]);
+
+    expect(await h.call(SERVICE_KINDS.reindex, {}, panel(8))).toEqual({ accepted: false });
+    expect(h.pushes).toHaveLength(1);
+  });
+
+  it("stores honest indexing state and publishes it only to the same tab's panel", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
+    await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, content(7));
+    h.pushes.length = 0;
+    const state: IndexingState = {
+      kind: "capturing",
+      processed: 2,
+      captured: 2,
+      expected: 6,
+      unstable: 0,
+    };
+
+    expect(await h.call(SERVICE_KINDS.indexStateReport, { state }, content(7))).toEqual({
+      accepted: true,
+    });
+    expect(h.pushes).toEqual([
+      { target: panel(7), kind: SERVICE_KINDS.indexStateChanged, payload: { state } },
+    ]);
+    expect(await h.call(SERVICE_KINDS.indexState, {}, panel(7))).toEqual(state);
+    expect(await h.call(SERVICE_KINDS.indexState, {}, panel(8))).toEqual({ kind: "idle" });
+  });
+
+  it("routes a source jump using the stored turn identity and relays its result", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor, {
+      newId: () => "jump-1",
+    });
+    await h.call(
+      SERVICE_KINDS.push,
+      { events: [{ ...codeEvent("m1", 0), turnId: "turn-1" }] },
+      content(7),
+    );
+    h.pushes.length = 0;
+
+    expect(
+      (await h.call(
+        SERVICE_KINDS.jump,
+        { conversationId: "c1", messageId: "m1" },
+        panel(7),
+      )) as JumpRequestResult,
+    ).toEqual({ status: "relocating", requestId: "jump-1" });
+    expect(h.pushes).toEqual([
+      {
+        target: content(7),
+        kind: SERVICE_KINDS.jumpRequested,
+        payload: { requestId: "jump-1", messageId: "m1", turnId: "turn-1" },
+      },
+    ]);
+
+    h.pushes.length = 0;
+    await h.call(
+      SERVICE_KINDS.jumpResultReport,
+      { requestId: "jump-1", status: "found" },
+      content(7),
+    );
+    expect(h.pushes).toEqual([
+      {
+        target: panel(7),
+        kind: SERVICE_KINDS.jumpResult,
+        payload: { requestId: "jump-1", status: "found" },
+      },
+    ]);
+  });
+
+  it("does not reveal or route a source jump for another tab's conversation", async () => {
+    const h = fakeHost();
+    registerStoreService(h.host, new InMemoryTranscriptStore(() => "T"), RulesExtractor);
+    await h.call(SERVICE_KINDS.push, { events: [codeEvent("m1", 0)] }, content(7));
+    h.pushes.length = 0;
+
+    expect(
+      await h.call(
+        SERVICE_KINDS.jump,
+        { conversationId: "c1", messageId: "m1" },
+        panel(8),
+      ),
+    ).toEqual({ status: "not-found" });
+    expect(h.pushes).toHaveLength(0);
   });
 
   // Codex round (2026-07-07): targeted delivery doesn't cover reads — every

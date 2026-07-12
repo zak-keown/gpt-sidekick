@@ -126,6 +126,32 @@ describe("capture — synthetic virtualized fixture", () => {
       unstable: ["a1b2c3d4-0005-4005-8005-000000000005"],
     });
   });
+
+  it("reports monotonic per-turn progress during a bounded hydration pass", async () => {
+    const progress: Array<{
+      processed: number;
+      captured: number;
+      expected: number;
+      unstable: number;
+    }> = [];
+
+    await capture({
+      root: doc,
+      url: FIXTURE_URL,
+      hydrateTurn: makeHydrator(doc),
+      onProgress: (update) => progress.push(update),
+    });
+
+    expect(progress).toHaveLength(6);
+    expect(progress.map((update) => update.processed)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(progress.every((update) => update.expected === 6)).toBe(true);
+    expect(progress.at(-1)).toEqual({
+      processed: 6,
+      captured: 5,
+      expected: 6,
+      unstable: 1,
+    });
+  });
 });
 
 describe("capture — edge cases", () => {

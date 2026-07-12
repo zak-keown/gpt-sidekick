@@ -1,118 +1,162 @@
 # HANDOFF — GPT-Sidekick
 
-_Last updated: 2026-07-07. Branch of record: `main`. All gates green: 109 tests, strict tsc, boundary lint, build, e2e._
+_Updated: 2026-07-12 · Branch of record: `main`_
 
-## TL;DR
+## Current state
 
-The full **SW-owned trust seam is built, reviewed, and verified headless**, and the
-extension **builds and loads**. Capture, targeted routing, the store, the Evidence
-Invariant, the live-outline push, and the panel↔SW round-trip all work and are
-tested. **The one thing left before "it visibly works end to end" is a manual
-load-test on a live chatgpt.com conversation** — that path (real virtualized DOM +
-scroll hydration + streaming) is the only thing that can't be automated
-(chatgpt.com blocks automation), so it needs a human with the extension loaded.
+The Chrome × ChatGPT spike now has a complete automated product loop:
 
-## What's built and proven (headless)
+1. The content script passively captures hydrated ChatGPT messages and supports
+   an explicit bounded **Re-index** over the persistent `[data-turn-id]` skeleton.
+2. The service worker owns IndexedDB storage, extraction, Evidence Invariant
+   validation, per-tab authorization, progress state, and targeted commands.
+3. The panel groups outline items, previews grounded evidence, reports honest
+   indexing state, copies summaries, and requests source-jumps.
+4. Source-jump can scroll a persistent turn back into view, wait for the exact
+   `data-message-id` to rehydrate, highlight it, and restore prior inline styles.
 
-- **Capture** (`adapters/provider-chatgpt`) — walks the persistent `[data-turn-id]`
-  skeleton, keys on durable `data-message-id` UUIDs, canonicalizes prose + code.
-  **Validated against a real ChatGPT capture** (2026-07-07): the content-root anchor
-  was corrected to `.markdown, .whitespace-pre-wrap`, and code-block toolbar chrome
-  ("PythonRun…") is now stripped by fencing the inner `<code>`.
-- **Routing** (`core/router` + `host-chrome`) — attested source, cross-tab firewall,
-  targeted delivery; revert-anchored trust tests. A Codex review hardened it: reads
-  are authorized per attested tab, and content-scripts can't masquerade as panels
-  (positive `sender.url` check).
-- **Store service** (`core/service` + `storage-dexie`) — upsert → extract → Evidence
-  Invariant → persist → counts; SW→panel live-outline push; ephemeral
-  `tab→conversationId` map. Proven end-to-end over the real router with fake ports.
-- **Live wiring** (`apps/chrome-spike`) — content script captures + pushes; panel
-  reads + renders a minimal outline. e2e proves the panel completes a routed
-  round-trip through the booted SW.
+Automated gates are green:
 
-## The immediate next action: manual load-test
+- 125 Vitest unit, integration, and component tests.
+- Strict TypeScript and package-boundary lint.
+- Production WXT build and zip.
+- Two Chromium e2e tests: service-worker connectivity and the built-extension
+  capture → SW/Dexie → grouped panel → source-highlight journey.
 
-1. `pnpm build`
-2. `chrome://extensions` → Developer mode → **Load unpacked** →
-   `apps/chrome-spike/.output/chrome-mv3`
-3. Open a **real chatgpt.com conversation** (ideally a long one, and one with code),
-   open the GPT-Sidekick side panel, and **scroll the conversation**.
-4. Open the ChatGPT tab's DevTools console and watch for
-   `[gpt-sidekick] captured N → indexed {…}`.
+What automation does **not** prove is authenticated ChatGPT's current long-chat
+virtualizer, streaming behavior, and real side-panel identity. That is the next
+gate—not more architecture work.
 
-**Bisecting a blank panel** (the log is designed for this):
+## Next: close the live-browser gate
 
-- No `captured` log at all → capture found nothing: re-check the anchors against the
-  live DOM (re-run the probe below). Content/DOM side.
-- `captured N` but no `indexed {…}` reply (or a timeout error) → the routed
-  content→SW→panel seam. Confirm the SW is alive and the content port connected.
-- `captured N → indexed {items: …}` but the panel stays empty → the panel side:
-  check `fetchConversationId` (tab→conversation map) and that the panel's tab id
-  matches the content tab (single-window assumption below).
+Use a long, innocuous ChatGPT conversation with code and, ideally, a multi-node
+tool/reasoning/answer turn.
 
-## Watch-list (documented assumptions to verify in real Chrome)
+1. Run `pnpm build`.
+2. In `chrome://extensions`, enable Developer mode and load unpacked from
+   `apps/chrome-spike/.output/chrome-mv3`.
+3. Open the conversation and the GPT-Sidekick panel.
+4. Click **Re-index** and record:
+   - expected and captured turn counts;
+   - unstable-turn count;
+   - time until Ready/Partial;
+   - whether the original reading position is restored acceptably.
+5. Click outline items sourced from early, middle, and late turns. At least one
+   source must be virtualized out before clicking. Confirm it rehydrates,
+   scrolls into view, and highlights the exact message.
+6. While ChatGPT is streaming a response, confirm passive capture settles to the
+   final text without duplicate or stale outline items.
+7. Repeat once after switching tabs/windows and once after allowing the service
+   worker to restart.
 
-These are fail-safe (loud/empty, not silent-wrong) but unverified on a live page:
+Watch the ChatGPT tab console for:
 
-1. **`port.sender.tab.id` is populated for the content-script connect.** The security
-   foundation; conventional MV3, but nothing green exercises a real content connect.
-2. **A real side panel's `sender.url` is `chrome-extension://<id>/sidepanel.html`.**
-   The panel-masquerade fix rejects the panel path otherwise → a dead panel. If the
-   panel never connects, check this first.
-3. **Panel tab id via `chrome.tabs.query({active,currentWindow})` is self-declared.**
-   Correct for a single window with the panel open on the ChatGPT tab; tab-switch /
-   multi-window misroutes. Authoritative SW-assigned attestation is deferred (see
-   `resolvePanelIdentity` and `plans/M2-core-evidence.md`).
-4. **Scroll-and-accumulate over a 74-turn virtualized thread** isn't exercised by the
-   static 2-turn fixture (`createLiveHydrator` only runs live). `turnIndex` =
-   position in the full skeleton, confirmed stable across scroll windows, so ordering
-   should hold — but verify the outline accumulates cleanly as you scroll.
-5. **Streaming churn** — the ~800ms trailing debounce should land captures after a
-   response settles; a mid-stream capture self-heals (upsert + CAS re-index). Tune
-   the debounce if the outline looks janky during generation.
+```text
+[gpt-sidekick] full captured N → indexed { ... }
+```
 
-## Regenerating the local anchor fixture
+### Live-gate exit criteria
 
-Real captures are personal data and live only in `fixtures.local/chatgpt/`
-(git-ignored). The `capture.real.test.ts` gate skips when the fixture is absent
-(clones/CI), and runs when present. To (re)generate after a ChatGPT DOM change:
+- At least 99% of the long chat's turn skeleton captures with stable message IDs.
+- Any miss is surfaced as Partial/Failed rather than silently omitted.
+- Virtualized-out source-jump succeeds for early, middle, and late evidence.
+- No cross-tab outline is shown during tab/window switching.
+- Streaming converges to the final response without persistent duplicates.
 
-- **Probe** (structural, no message text) — paste in the chatgpt.com DevTools console
-  to validate the 5 anchors in `anchors.ts`. Reports counts of `[data-turn-id]`,
-  `[data-message-id]`, `data-message-author-role`, `[data-message-content]` (should
-  be 0 — it was assumed), plus the user/assistant content-container structure.
-- **Dump** — saves the conversation container's `outerHTML` to a download; move it to
-  `fixtures.local/chatgpt/sample-01.html`. Use a **throwaway/innocuous chat** (it
-  contains message text).
+If these hold, write `findings/<date>_spike-verdict.md` with the measurements and
+an explicit **proceed to Alpha / rethink** verdict.
 
-(The exact snippets are in the 2026-07-07 session history; both are short and
-self-contained. Worth committing them to `scripts/` next.)
+## If the live test fails
 
-## Go-forward roadmap
+Bisect in this order:
 
-1. **Manual load-test** (above) → fix whatever the live DOM surfaces (most likely a
-   selector tweak or the panel-tabId/`sender.url` real-Chrome checks). This closes
-   M2b and gives the first real spike verdict.
-2. **M3 — outline UI + source-jump.** Replace the minimal list with grouped items
-   (by type/section), a **source-jump** that scrolls the ChatGPT tab to the cited
-   message (panel→content routing already exists: `canSend(panel@t, content@t)`), and
-   copy buttons. The `anchor` on each event (`[data-message-id="…"]`) is the jump target.
-3. **M4 — spike verdict.** Judge outline usefulness on real long chats; decide whether
-   rules extraction suffices or the neural `Extractor` is needed (recall is honestly
-   expected-low for Correction/Decision categories — §14).
-4. **Then:** authoritative panel-tabId attestation; store-eviction (`unlimitedStorage`);
-   provider seam for Claude/Gemini (the `textHash` reuse is already in the model).
+1. **No capture log:** inspect the five selectors in
+   `packages/adapters/provider-chatgpt/src/anchors.ts` against the live DOM.
+2. **Captured but no indexed reply:** inspect the content port, service worker,
+   and routed RPC timeout/error.
+3. **Indexed but blank panel:** inspect the panel's tab identity and the ephemeral
+   `tab → conversationId` mapping.
+4. **Re-index stalls on a turn:** capture that turn's structural HTML and add a
+   regression fixture before changing hydration timing.
+5. **Jump reports not-found:** check whether `data-turn-id` remained present and
+   stable, then whether the cited `data-message-id` returned after scrolling.
+6. **Wrong source highlights:** stop and treat it as a trust-boundary defect;
+   reproduce with a failing test before modifying routing or selector logic.
+
+Real captures contain personal data. Keep them only under the git-ignored
+`fixtures.local/chatgpt/` directory.
+
+## After the live gate: ordered backlog
+
+### 1. M4 usefulness verdict
+
+Evaluate three real conversations, including the longest available. Measure
+items per 100 turns, category precision/noise, duplicates, missed decisions, and
+whether a reviewer can recover the thread faster than by rereading it.
+
+Do not start the neural extractor merely because the seam exists. First determine
+whether rules extraction is already useful and which categories actually need
+better recall.
+
+### 2. Reliability and privacy hardening
+
+In order:
+
+1. Replace self-declared panel tab identity with an authoritative assignment or
+   another Chrome-attested design; cover multi-window and active-tab changes.
+2. Persist indexing state/count metadata so a service-worker restart does not
+   reset the panel to Idle or require a fresh DOM mutation.
+3. Add `unlimitedStorage` or implement an explicit quota/eviction policy.
+4. Add delete-current-conversation and delete-all-data controls.
+5. Add IndexedDB migration tests before advancing the schema beyond version 1.
+6. Commit structural DOM probe and fixture-generation scripts under `scripts/`.
+7. Add CI for test, typecheck, lint, build, and browser e2e.
+
+### 3. Extraction-quality dataset
+
+Label enough real snippets to measure category quality rather than tune from
+anecdotes. The embedder-eval floor remains:
+
+- at least 300 labeled snippets;
+- at least 30 examples per non-code Task-A category;
+- at least two boundary-labeled conversations of 40+ turns.
+
+Likely rules work before ML: role-aware question detection, duplicate suppression,
+and superseded/open-state handling for decisions and questions.
+
+### 4. Alpha scope
+
+Only after the spike verdict and data floor:
+
+1. Per-site `optional_host_permissions` opt-in UX.
+2. On-device embedder evaluation from `SPEC-embedder-eval.md`.
+3. Sanctioned `conversations.json` import adapter.
+4. Claude provider adapter to prove the provider boundary.
+
+Defer Firefox, Gemini, coding-agent surfaces, sync, and abstractive generation
+until the ChatGPT Alpha demonstrates repeat use.
+
+## Known assumptions still open
+
+- A real side panel's `sender.url` matches the extension-page gate.
+- `chrome.tabs.query({ active: true, currentWindow: true })` identifies the
+  intended tab in real side-panel, tab-switch, and multi-window use.
+- A long active hydration pass does not fight ChatGPT's virtualizer or leave the
+  user at an unexpected scroll position.
+- Multi-node turns hydrate atomically enough for DOM-order `messageIndex` to stay
+  correct; disjoint partial hydration remains fixture-gated.
+- The 800 ms trailing debounce converges cleanly during real streaming.
 
 ## Key files
 
 | Concern | File |
 | --- | --- |
 | Evidence Invariant | `packages/core/src/evidence.ts` |
-| Rules extractor + seam | `packages/core/src/extractor.ts` |
-| Targeted routing (trust) | `packages/core/src/router.ts`, `packages/adapters/host-chrome/src/router-port.ts` |
-| Store-service contract | `packages/core/src/service.ts` |
-| ChatGPT DOM anchors | `packages/adapters/provider-chatgpt/src/anchors.ts` |
-| Canonicalization | `packages/adapters/provider-chatgpt/src/canonicalize.ts` |
-| Content-script wiring | `apps/chrome-spike/entrypoints/chatgpt.content.ts` |
-| Panel wiring | `apps/chrome-spike/entrypoints/sidepanel/main.tsx`, `packages/ui/src/OutlinePanel.tsx` |
-| Milestone plans + deferred items | `plans/M2-core-evidence.md` |
+| Rules extractor | `packages/core/src/extractor.ts` |
+| Store service and command/state contract | `packages/core/src/service.ts` |
+| Targeted routing | `packages/core/src/router.ts`, `packages/adapters/host-chrome/src/router-port.ts` |
+| Capture and hydration | `packages/adapters/provider-chatgpt/src/capture.ts`, `packages/adapters/provider-chatgpt/src/hydrate.ts` |
+| Source relocation | `packages/adapters/provider-chatgpt/src/jump.ts` |
+| Live content wiring | `apps/chrome-spike/entrypoints/chatgpt.content.ts` |
+| Panel UI | `packages/ui/src/OutlinePanel.tsx` |
+| Browser journeys | `apps/chrome-spike/e2e/wiring.spec.ts` |

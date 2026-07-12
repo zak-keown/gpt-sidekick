@@ -8,11 +8,14 @@
  */
 export { capture, isHydrated } from "./capture";
 export { createLiveHydrator } from "./hydrate";
+export { jumpToSource } from "./jump";
 export { anchors, AS_OF } from "./anchors";
 export { canonicalizeNode } from "./canonicalize";
 export type {
   CaptureResult,
+  CaptureProgress,
   CaptureState,
   Role,
   TranscriptEvent,
 } from "./types";
+export type { JumpResult } from "./jump";

@@ -1,6 +1,12 @@
 import { anchors } from "./anchors";
 import { canonicalizeNode } from "./canonicalize";
-import type { CaptureResult, CaptureState, Role, TranscriptEvent } from "./types";
+import type {
+  CaptureProgress,
+  CaptureResult,
+  CaptureState,
+  Role,
+  TranscriptEvent,
+} from "./types";
 
 const ROLES: ReadonlySet<string> = new Set([
   "user",
@@ -49,8 +55,9 @@ export async function capture(opts: {
   root: ParentNode;
   url: string;
   hydrateTurn: (turn: Element) => Promise<void>;
+  onProgress?: (progress: CaptureProgress) => void;
 }): Promise<CaptureResult> {
-  const { root, url, hydrateTurn } = opts;
+  const { root, url, hydrateTurn, onProgress } = opts;
 
   // Conversation identity is the durable key ([conversationId+messageId]); a
   // bad/absent id would co-mingle distinct chats. Fail loudly, never bucket
@@ -122,6 +129,13 @@ export async function capture(opts: {
 
     if (messageCount > 0 && cleanCount === messageCount) capturedTurns++;
     else unstable.push(turnId); // partial paint / missing content root / no nodes
+
+    onProgress?.({
+      processed: turnIndex + 1,
+      captured: capturedTurns,
+      expected: turns.length,
+      unstable: unstable.length,
+    });
   }
 
   const expected = turns.length;

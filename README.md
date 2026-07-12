@@ -4,9 +4,10 @@ A Chrome extension that gives you a **live, source-linked outline** of long Chat
 conversations — so a thread that has scrolled past readability becomes navigable at
 a glance, and every outline item links back to the exact message it came from.
 
-> **Status:** working spike (ChatGPT × Chrome). The full trust core, storage, and
-> messaging seam are built and tested; the extension builds and loads. The last
-> step is a manual load-test on a live chatgpt.com conversation — see
+> **Status:** working spike (ChatGPT × Chrome). The trust core, storage,
+> targeted messaging, explicit re-index, grouped outline UI, copy controls, and
+> source-jump are built and tested. The remaining spike gate is a manual
+> virtualized load-test on live chatgpt.com conversations — see
 > [`HANDOFF.md`](./HANDOFF.md).
 
 ## Why it's different: the Evidence Invariant
@@ -76,11 +77,11 @@ host-free, so the trust rules are provider-agnostic); adapters/ui may import
 
 ```bash
 pnpm install
-pnpm test          # 109 unit/integration tests (Vitest)
+pnpm test          # 125 unit/integration/component tests (Vitest)
 pnpm build         # builds all packages + the extension → apps/chrome-spike/.output/chrome-mv3
 pnpm typecheck     # strict tsc across the workspace
 pnpm lint          # eslint + package-boundary rules
-pnpm --filter chrome-spike e2e   # Playwright: side panel ⇄ SW routed round-trip
+pnpm --filter chrome-spike e2e   # Playwright: SW smoke + capture → panel → source-jump
 ```
 
 **Load the extension** (Chrome/Chromium):

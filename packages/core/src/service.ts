@@ -32,7 +32,48 @@ export const SERVICE_KINDS = {
   changed: "transcript/changed",
   /** panel→SW: "which conversation is my tab showing?" */
   conversation: "transcript/conversation",
+  /** panel→SW, then SW→content: run a bounded scroll-and-hydrate pass. */
+  reindex: "transcript/reindex",
+  reindexRequested: "transcript/reindex-requested",
+  /** Content-owned capture state, relayed and readable by its tab's panel. */
+  indexStateReport: "transcript/index-state-report",
+  indexState: "transcript/index-state",
+  indexStateChanged: "transcript/index-state-changed",
+  /** panel→SW→content source relocation, with an async result back to panel. */
+  jump: "transcript/jump",
+  jumpRequested: "transcript/jump-requested",
+  jumpResultReport: "transcript/jump-result-report",
+  jumpResult: "transcript/jump-result",
 } as const;
+
+export type IndexCounts = {
+  messages: number;
+  items: number;
+  droppedNoEvidence: number;
+  unstable: number;
+};
+
+type CaptureCounts = {
+  captured: number;
+  expected: number;
+  unstable: number;
+};
+
+export type IndexingState =
+  | { kind: "idle" }
+  | ({ kind: "capturing"; processed: number } & CaptureCounts)
+  | ({ kind: "indexing" } & CaptureCounts)
+  | ({ kind: "ready" } & IndexCounts)
+  | ({ kind: "partial"; captured: number; expected: number } & IndexCounts)
+  | { kind: "failed"; reason: string };
+
+export type JumpRequestResult =
+  | { status: "relocating"; requestId: string }
+  | { status: "not-found" };
+export type JumpResult = {
+  requestId: string;
+  status: "found" | "not-found";
+};
 
 /** Counts surfaced back to the pusher (SPEC §12.3 `meta.counts`). */
 export type PushResult = {
@@ -60,6 +101,10 @@ export interface StoreServiceHost {
 type PushPayload = { events: TranscriptEvent[] };
 type ConversationPayload = { conversationId: string };
 type RecordPayload = { conversationId: string; messageId: string };
+type StatePayload = { state: IndexingState; conversationId?: string };
+type JumpRequestedPayload = { requestId: string; messageId: string; turnId?: string };
+
+export type StoreServiceOptions = { newId?: () => string };
 
 /**
  * Register the store handlers on the SW host. A push upserts the events, then
@@ -72,16 +117,22 @@ export function registerStoreService(
   host: StoreServiceHost,
   store: TranscriptStore,
   extractor: Extractor,
+  options: StoreServiceOptions = {},
 ): void {
   // Ephemeral SW state: which conversation each tab is currently showing.
   // Rebuilt from pushes when the SW wakes; the durable data lives in the store.
   const tabConversation = new Map<number, string>();
+  const tabIndexState = new Map<number, IndexingState>();
+  const pendingJumps = new Map<string, number>();
+  let nextJumpId = 1;
+  const newId = options.newId ?? (() => `jump-${nextJumpId++}`);
 
   host.handle(SERVICE_KINDS.push, async (payload, source) => {
     const events = (payload as PushPayload).events;
     await store.upsertRecords(events);
 
     const conversationIds = [...new Set(events.map((e) => e.conversationId))];
+    let messages = 0;
     let items = 0;
     let droppedNoEvidence = 0;
     let written = true;
@@ -90,6 +141,7 @@ export function registerStoreService(
       items += result.items.length;
       droppedNoEvidence += result.droppedNoEvidence;
       written = written && result.written;
+      messages += (await store.getRecords(conversationId)).length;
     }
 
     // Only a Chrome-attested content script pins a tab's conversation and gets
@@ -103,7 +155,7 @@ export function registerStoreService(
       }
     }
 
-    return { messages: events.length, items, droppedNoEvidence, written } satisfies PushResult;
+    return { messages, items, droppedNoEvidence, written } satisfies PushResult;
   });
 
   // Read authorization — the §13 tenant boundary for READS. Targeted delivery
@@ -136,6 +188,66 @@ export function registerStoreService(
     // Normalise `undefined` to `null` so a missing record survives the JSON
     // round-trip of a real transport as a present-but-empty reply.
     return (await store.getRecord(conversationId, messageId)) ?? null;
+  });
+
+  host.handle(SERVICE_KINDS.reindex, (_payload, source) => {
+    if (source.context !== "panel" || !tabConversation.has(source.tabId)) {
+      return { accepted: false };
+    }
+    host.push({ context: "content", tabId: source.tabId }, SERVICE_KINDS.reindexRequested, {});
+    return { accepted: true };
+  });
+
+  host.handle(SERVICE_KINDS.indexStateReport, (payload, source) => {
+    if (source.context !== "content") return { accepted: false };
+    const { state, conversationId } = payload as StatePayload;
+    if (conversationId) tabConversation.set(source.tabId, conversationId);
+    tabIndexState.set(source.tabId, state);
+    host.push(
+      { context: "panel", tabId: source.tabId },
+      SERVICE_KINDS.indexStateChanged,
+      { state } satisfies StatePayload,
+    );
+    return { accepted: true };
+  });
+
+  host.handle(SERVICE_KINDS.indexState, (_payload, source) =>
+    source.context === "panel"
+      ? (tabIndexState.get(source.tabId) ?? ({ kind: "idle" } satisfies IndexingState))
+      : ({ kind: "idle" } satisfies IndexingState),
+  );
+
+  host.handle(SERVICE_KINDS.jump, async (payload, source) => {
+    if (source.context !== "panel") return { status: "not-found" };
+    const { conversationId, messageId } = payload as RecordPayload;
+    if (!canRead(source, conversationId)) return { status: "not-found" };
+    const record = await store.getRecord(conversationId, messageId);
+    if (!record) return { status: "not-found" };
+    const requestId = newId();
+    pendingJumps.set(requestId, source.tabId);
+    host.push(
+      { context: "content", tabId: source.tabId },
+      SERVICE_KINDS.jumpRequested,
+      {
+        requestId,
+        messageId,
+        turnId: record.turnId,
+      } satisfies JumpRequestedPayload,
+    );
+    return { status: "relocating", requestId } satisfies JumpRequestResult;
+  });
+
+  host.handle(SERVICE_KINDS.jumpResultReport, (payload, source) => {
+    if (source.context !== "content") return { accepted: false };
+    const result = payload as JumpResult;
+    if (pendingJumps.get(result.requestId) !== source.tabId) return { accepted: false };
+    pendingJumps.delete(result.requestId);
+    host.push(
+      { context: "panel", tabId: source.tabId },
+      SERVICE_KINDS.jumpResult,
+      result,
+    );
+    return { accepted: true };
   });
 }
 
@@ -197,4 +309,63 @@ export function onOutlineChanged(
   rpc.handle(SERVICE_KINDS.changed, (payload) => {
     handler((payload as ConversationPayload).conversationId);
   });
+}
+
+export function requestReindex(rpc: Rpc): Promise<{ accepted: boolean }> {
+  return rpc.request(SERVICE_KINDS.reindex, {}) as Promise<{ accepted: boolean }>;
+}
+
+export function onReindexRequested(rpc: Rpc, handler: () => void | Promise<void>): void {
+  rpc.handle(SERVICE_KINDS.reindexRequested, handler);
+}
+
+export function reportIndexState(
+  rpc: Rpc,
+  state: IndexingState,
+  conversationId?: string,
+): Promise<{ accepted: boolean }> {
+  return rpc.request(SERVICE_KINDS.indexStateReport, {
+    state,
+    conversationId,
+  } satisfies StatePayload) as Promise<{ accepted: boolean }>;
+}
+
+export function fetchIndexState(rpc: Rpc): Promise<IndexingState> {
+  return rpc.request(SERVICE_KINDS.indexState, {}) as Promise<IndexingState>;
+}
+
+export function onIndexStateChanged(rpc: Rpc, handler: (state: IndexingState) => void): void {
+  rpc.handle(SERVICE_KINDS.indexStateChanged, (payload) => {
+    handler((payload as StatePayload).state);
+  });
+}
+
+export function requestSourceJump(
+  rpc: Rpc,
+  conversationId: string,
+  messageId: string,
+): Promise<JumpRequestResult> {
+  return rpc.request(SERVICE_KINDS.jump, {
+    conversationId,
+    messageId,
+  } satisfies RecordPayload) as Promise<JumpRequestResult>;
+}
+
+export function onJumpRequested(
+  rpc: Rpc,
+  handler: (request: JumpRequestedPayload) => void | Promise<void>,
+): void {
+  rpc.handle(SERVICE_KINDS.jumpRequested, (payload) =>
+    handler(payload as JumpRequestedPayload),
+  );
+}
+
+export function reportJumpResult(rpc: Rpc, result: JumpResult): Promise<{ accepted: boolean }> {
+  return rpc.request(SERVICE_KINDS.jumpResultReport, result) as Promise<{
+    accepted: boolean;
+  }>;
+}
+
+export function onJumpResult(rpc: Rpc, handler: (result: JumpResult) => void): void {
+  rpc.handle(SERVICE_KINDS.jumpResult, (payload) => handler(payload as JumpResult));
 }

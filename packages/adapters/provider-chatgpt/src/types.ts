@@ -25,4 +25,12 @@ export type CaptureState =
   | { kind: "partial"; captured: number; expected: number; unstable: string[] }
   | { kind: "failed"; reason: "no-messages-matched" | "no-conversation-id" };
 
+/** Monotonic progress emitted after each skeleton turn is processed. */
+export type CaptureProgress = {
+  processed: number;
+  captured: number;
+  expected: number;
+  unstable: number;
+};
+
 export type CaptureResult = { events: TranscriptEvent[]; state: CaptureState };

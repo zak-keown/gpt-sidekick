@@ -5,9 +5,15 @@ import { InMemoryTranscriptStore } from "@gpt-sidekick/core/store";
 import { RulesExtractor } from "@gpt-sidekick/core/extractor";
 import {
   fetchConversationId,
+  onJumpRequested,
+  onJumpResult,
   fetchOutline,
   onOutlineChanged,
   pushTranscript,
+  reportJumpResult,
+  requestReindex,
+  requestSourceJump,
+  onReindexRequested,
   registerStoreService,
 } from "@gpt-sidekick/core/service";
 import type { Address } from "@gpt-sidekick/core/router";
@@ -197,5 +203,51 @@ describe("routed RPC / SW service — client ⇄ router ⇄ source-aware handler
     expect(await changed).toBe("c1"); // the panel for tab 7 was notified
     expect(await fetchConversationId(panelRpc)).toBe("c1");
     expect(await fetchOutline(panelRpc, "c1")).toHaveLength(result.items);
+  });
+
+  it("end to end: panel re-index + source-jump commands stay scoped to its content tab", async () => {
+    const fc = fakeChrome();
+    const router = createSwPortRouter(fc.runtime);
+    const svc = createSwService(router);
+    registerStoreService(svc, new InMemoryTranscriptStore(() => "T"), RulesExtractor, {
+      newId: () => "jump-1",
+    });
+
+    const contentRpc = fc.connectAs(contentSender(7), () =>
+      connectRouted({ context: "content" }, fc.runtime),
+    );
+    const panelRpc = fc.connectAs(panelSender(), () =>
+      connectRouted({ context: "panel", tabId: 7 }, fc.runtime),
+    );
+    await pushTranscript(contentRpc, [
+      { ...codeEvent("m1", 0), turnId: "turn-1" },
+    ]);
+
+    let resolveReindex: () => void;
+    const reindexed = new Promise<void>((resolve) => (resolveReindex = resolve));
+    onReindexRequested(contentRpc, () => resolveReindex());
+    expect(await requestReindex(panelRpc)).toEqual({ accepted: true });
+    await reindexed;
+
+    onJumpRequested(contentRpc, async (request) => {
+      expect(request).toEqual({
+        requestId: "jump-1",
+        messageId: "m1",
+        turnId: "turn-1",
+      });
+      await reportJumpResult(contentRpc, {
+        requestId: request.requestId,
+        status: "found",
+      });
+    });
+    let resolveJump: (status: string) => void;
+    const jumped = new Promise<string>((resolve) => (resolveJump = resolve));
+    onJumpResult(panelRpc, (result) => resolveJump(result.status));
+
+    expect(await requestSourceJump(panelRpc, "c1", "m1")).toEqual({
+      status: "relocating",
+      requestId: "jump-1",
+    });
+    expect(await jumped).toBe("found");
   });
 });
