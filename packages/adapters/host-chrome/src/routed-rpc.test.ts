@@ -29,6 +29,8 @@ class LinkedPort {
   peer!: LinkedPort;
   readonly msgListeners: MsgListener[] = [];
   readonly disconnectListeners: DisconnectListener[] = [];
+  /** Set when the SW is torn down; Chrome then throws on any further use. */
+  dead = false;
 
   constructor(
     public readonly name: string,
@@ -42,6 +44,7 @@ class LinkedPort {
     addListener: (l: DisconnectListener) => this.disconnectListeners.push(l),
   };
   readonly postMessage = (message: unknown): void => {
+    if (this.dead) throw new Error("Attempting to use a disconnected port object");
     for (const l of this.peer.msgListeners) l(message, this.peer);
   };
   readonly disconnect = (): void => {
@@ -59,26 +62,65 @@ function makePair(name: string, sender?: chrome.runtime.MessageSender) {
 
 function fakeChrome() {
   const swConnectListeners: ((port: chrome.runtime.Port) => void)[] = [];
+  const livePairs: { client: LinkedPort; sw: LinkedPort }[] = [];
   let nextSender: chrome.runtime.MessageSender | undefined;
-  return {
-    runtime: {
-      id: EXT_ID,
-      onConnect: {
-        addListener: (cb: (port: chrome.runtime.Port) => void) =>
-          swConnectListeners.push(cb),
-      },
-      connect: (info?: { name?: string }) => {
-        const { client, sw } = makePair(info?.name ?? "", nextSender);
-        for (const cb of swConnectListeners) cb(sw as unknown as chrome.runtime.Port);
-        return client as unknown as chrome.runtime.Port;
-      },
+
+  const connect = (info?: { name?: string }) => {
+    const { client, sw } = makePair(info?.name ?? "", nextSender);
+    livePairs.push({ client, sw });
+    for (const cb of swConnectListeners) cb(sw as unknown as chrome.runtime.Port);
+    return client as unknown as chrome.runtime.Port;
+  };
+
+  const runtime = {
+    id: EXT_ID,
+    onConnect: {
+      addListener: (cb: (port: chrome.runtime.Port) => void) =>
+        swConnectListeners.push(cb),
     },
+    connect,
+  };
+
+  return {
+    runtime,
     connectAs<T>(sender: chrome.runtime.MessageSender, fn: () => T): T {
       nextSender = sender;
       try {
         return fn();
       } finally {
         nextSender = undefined;
+      }
+    },
+    /**
+     * A runtime whose EVERY connect — including a reconnect the client makes on
+     * its own, long after the first one — is attested as `sender`. Chrome
+     * attests each connect afresh; `connectAs` only covers a synchronous call.
+     */
+    runtimeAs(sender: chrome.runtime.MessageSender) {
+      return {
+        ...runtime,
+        connect: (info?: { name?: string }) => {
+          nextSender = sender;
+          try {
+            return connect(info);
+          } finally {
+            nextSender = undefined;
+          }
+        },
+      };
+    },
+    /**
+     * Chrome reclaims the idle MV3 service worker: every open port dies (further
+     * `postMessage` throws), the surviving ends get `onDisconnect`, and the SW's
+     * `onConnect` listeners go with the instance. A later connect wakes a FRESH
+     * SW — the caller re-boots one to model that.
+     */
+    killServiceWorker(): void {
+      swConnectListeners.length = 0;
+      for (const { client, sw } of livePairs.splice(0)) {
+        client.dead = true;
+        sw.dead = true;
+        for (const l of client.disconnectListeners) l(client);
       }
     },
   };
@@ -249,5 +291,59 @@ describe("routed RPC / SW service — client ⇄ router ⇄ source-aware handler
       requestId: "jump-1",
     });
     expect(await jumped).toBe("found");
+  });
+});
+
+/**
+ * MV3 reclaims an idle service worker after ~30 s. Every client therefore
+ * OUTLIVES the SW it connected to, and a one-shot `runtime.connect` leaves the
+ * content script posting into a dead port forever — capture silently stops for
+ * the rest of the tab's life, and the SW's ephemeral `tab → conversation` map
+ * can never be repopulated, so the panel is stuck on Idle with Re-index
+ * rejected. Observed live on chatgpt.com 2026-08-11, ~70 s after page load
+ * (findings/2026-08-11_spike-live-test.md). Reconnecting is what makes the
+ * extension survive its own host lifecycle.
+ */
+describe("routed RPC — surviving service-worker teardown", () => {
+  const boot = (fc: ReturnType<typeof fakeChrome>) => {
+    const svc = createSwService(createSwPortRouter(fc.runtime));
+    svc.handle("ping", (payload) => ({ pong: payload }));
+    svc.handle("whoami", (_payload, source) => source);
+    return svc;
+  };
+
+  it("a content script keeps pushing after the SW is torn down and a fresh one wakes", async () => {
+    const fc = fakeChrome();
+    boot(fc);
+    const rpc = connectRouted({ context: "content" }, fc.runtimeAs(contentSender(7)));
+    expect(await rpc.request("ping", "before")).toEqual({ pong: "before" });
+
+    fc.killServiceWorker();
+    boot(fc); // Chrome wakes a brand-new SW instance on the next connect
+
+    expect(await rpc.request("ping", "after")).toEqual({ pong: "after" });
+    // Still attested as tab 7 — the reconnect must not lose identity.
+    expect(await rpc.request("whoami", null)).toEqual({ context: "content", tabId: 7 });
+  });
+
+  it("a panel re-announces its hello on reconnect, so the SW can still route to it", async () => {
+    const fc = fakeChrome();
+    const svc = boot(fc);
+    const rpc = connectRouted({ context: "panel", tabId: 7 }, fc.runtimeAs(panelSender()));
+    expect(await rpc.request("ping", "before")).toEqual({ pong: "before" });
+
+    fc.killServiceWorker();
+    const svc2 = boot(fc);
+
+    expect(await rpc.request("ping", "after")).toEqual({ pong: "after" });
+
+    // A push from the fresh SW must reach the reconnected panel: without a
+    // replayed hello the new SW has no identity for it and drops the message.
+    let resolve!: (v: unknown) => void;
+    const got = new Promise((r) => (resolve = r));
+    rpc.handle("notify", (payload) => resolve(payload));
+    svc2.push(panel(7), "notify", { hello: "again" });
+    expect(await got).toEqual({ hello: "again" });
+    expect(svc).not.toBe(svc2);
   });
 });

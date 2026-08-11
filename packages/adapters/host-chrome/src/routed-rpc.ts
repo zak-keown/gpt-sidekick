@@ -57,31 +57,72 @@ type ConnectRuntime = {
  * panels are extension pages with no attested tab, so they announce their tab id
  * in a `hello` that MUST be the first message on the port (the SW's
  * `resolvePanelIdentity` treats the first message as the hello and disconnects
- * anything else) — so we send it here, synchronously, before any RPC call.
+ * anything else) — so we send it on every connection, before any RPC call.
+ *
+ * SURVIVING THE SW LIFECYCLE. MV3 reclaims an idle service worker (~30 s), so
+ * every client OUTLIVES the SW it connected to. A one-shot `runtime.connect`
+ * therefore rots: the port dies with the SW and every later `postMessage`
+ * throws "Attempting to use a disconnected port object" forever, so capture
+ * silently stops for the life of the tab and the SW's ephemeral
+ * `tab → conversation` map can never be repopulated (observed live 2026-08-11,
+ * findings/2026-08-11_spike-live-test.md). We reconnect instead — LAZILY, on
+ * the next send, so we never hold the SW awake merely to keep a socket open.
+ * The first connection is still eager, so the SW can reach an idle client
+ * (re-index / jump commands) before it has sent anything.
+ *
+ * Residual: between the SW dying and this client's next send, an SW→client
+ * push has no route and is dropped. Reads are unaffected (the panel refetches
+ * on its next interaction, which is itself a send), and no state is lost —
+ * the durable data lives in the store.
  */
 export function connectRouted(
   self: { context: "content" } | { context: "panel"; tabId: number },
   runtime: ConnectRuntime = chrome.runtime,
 ): Rpc {
   const name = self.context === "content" ? CONTENT_PORT : PANEL_PORT;
-  const port = runtime.connect({ name });
-  if (self.context === "panel") {
-    port.postMessage({ kind: "hello", tabId: self.tabId });
-  }
+  let port: chrome.runtime.Port | undefined;
+  let deliver: ((envelope: Envelope) => void) | undefined;
+
+  const open = (): chrome.runtime.Port => {
+    const fresh = runtime.connect({ name });
+    // Re-announce on EVERY connection: a fresh SW instance has no memory of an
+    // earlier hello, and without one it disconnects the port as a bad handshake.
+    if (self.context === "panel") {
+      fresh.postMessage({ kind: "hello", tabId: self.tabId });
+    }
+    fresh.onMessage.addListener((message: unknown) => {
+      const envelope = (message as { envelope?: unknown }).envelope;
+      if (isEnvelope(envelope)) deliver?.(envelope);
+    });
+    fresh.onDisconnect.addListener(() => {
+      if (port === fresh) port = undefined; // next send opens a new one
+    });
+    port = fresh;
+    return fresh;
+  };
 
   const transport: Transport = {
     // Address every call to the SW; it stamps our attested source and relays.
     // We deliberately do NOT declare our own source — the SW attests it.
-    send: (envelope) => port.postMessage({ target: SW, envelope }),
+    send: (envelope) => {
+      const routed = { target: SW, envelope };
+      try {
+        (port ?? open()).postMessage(routed);
+      } catch {
+        // The port died before its `onDisconnect` reached us. Retry once on a
+        // fresh connection; a second throw surfaces to the caller's RPC.
+        port = undefined;
+        open().postMessage(routed);
+      }
+    },
     onMessage: (listener) => {
-      port.onMessage.addListener((message: unknown) => {
-        const envelope = (message as { envelope?: unknown }).envelope;
-        if (isEnvelope(envelope)) listener(envelope);
-      });
+      deliver = listener;
     },
   };
 
-  return createRpc(transport, timerOptions);
+  const rpc = createRpc(transport, timerOptions);
+  open(); // eager first connect: keeps the client reachable while idle
+  return rpc;
 }
 
 /**
