@@ -200,7 +200,18 @@ export function OutlinePanel({ rpc }: { rpc: Rpc }) {
                 {group.label} <span>{group.items.length}</span>
               </h2>
               <ul class={styles.list}>
-                {group.items.map((item) => (
+                {group.items.map((item) => {
+                  const quote = item.evidence[0]?.quote.trim() ?? "";
+                  // `title` is a prefix of its own evidence quote by construction
+                  // (extractor `titleFrom`), so printing both repeated the line
+                  // verbatim for the common short quote. Show only what the
+                  // title leaves out; a quote that adds nothing gets no line.
+                  // (Non-prefix titles stay possible — grounding uses `includes`
+                  // — so fall back to the whole quote rather than mis-slicing.)
+                  const preview = quote.startsWith(item.title)
+                    ? quote.slice(item.title.length).trim()
+                    : quote;
+                  return (
                   <li class={styles.item} key={item.id}>
                     <button
                       class={styles.itemButton}
@@ -210,7 +221,7 @@ export function OutlinePanel({ rpc }: { rpc: Rpc }) {
                       onClick={() => void jump(item)}
                     >
                       <span class={styles.title}>{item.title}</span>
-                      <span class={styles.quote}>{item.evidence[0]?.quote}</span>
+                      {preview ? <span class={styles.quote}>{preview}</span> : null}
                     </button>
                     <button
                       class={styles.copyButton}
@@ -221,7 +232,8 @@ export function OutlinePanel({ rpc }: { rpc: Rpc }) {
                       Copy
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </section>
           ))}

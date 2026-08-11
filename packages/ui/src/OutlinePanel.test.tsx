@@ -60,14 +60,14 @@ const items: OutlineItem[] = [
   },
 ];
 
-function fakeRpc(options: { earlyJumpResult?: boolean } = {}) {
+function fakeRpc(options: { earlyJumpResult?: boolean; items?: OutlineItem[] } = {}) {
   const handlers = new Map<string, (payload: unknown) => unknown | Promise<unknown>>();
   const requests: Array<{ kind: string; payload: unknown }> = [];
   const rpc: Rpc = {
     request: vi.fn(async (kind: string, payload: unknown) => {
       requests.push({ kind, payload });
       if (kind === SERVICE_KINDS.conversation) return "c1";
-      if (kind === SERVICE_KINDS.outline) return items;
+      if (kind === SERVICE_KINDS.outline) return options.items ?? items;
       if (kind === SERVICE_KINDS.indexState) {
         return {
           kind: "ready",
@@ -213,5 +213,44 @@ describe("OutlinePanel — M3 user loop", () => {
 
     expect(writeText).toHaveBeenCalledWith("Next step: ship the source jump.");
     expect(root.querySelector('[data-testid="jump-state"]')?.textContent).toContain("Copied");
+  });
+
+  // UAT 2026-08-11: every card printed its text twice — the extractor's title is
+  // a prefix of the evidence quote by construction, so for the common short
+  // quote the bold title and the grey preview were character-identical. The
+  // preview must earn its line by showing what the title does not.
+  it("prints a short item's text once, not twice", async () => {
+    const { rpc } = fakeRpc();
+    await act(async () => render(<OutlinePanel rpc={rpc} />, root));
+    await flush();
+
+    const card = root.querySelector('[data-testid="outline-item"]');
+    const text = card?.textContent ?? "";
+    const occurrences = text.split("Next step: ship the source jump.").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it("previews the rest of a long quote instead of repeating its opening", async () => {
+    const quote =
+      "Let's use the enablement platform framing for the umbrella product name, " +
+      "because it describes the architecture rather than any single feature.";
+    const title = "Let's use the enablement platform framing for the";
+    const { rpc } = fakeRpc({
+      items: [
+        {
+          id: "decision-m9-0",
+          type: "decision",
+          title,
+          summary: quote,
+          evidence: [{ messageId: "m9", quote, offsetStart: 0, offsetEnd: quote.length }],
+        },
+      ],
+    });
+    await act(async () => render(<OutlinePanel rpc={rpc} />, root));
+    await flush();
+
+    const text = root.querySelector('[data-testid="outline-item"]')?.textContent ?? "";
+    expect(text.split(title).length - 1).toBe(1); // the opening appears once
+    expect(text).toContain("because it describes the architecture"); // the tail is still shown
   });
 });

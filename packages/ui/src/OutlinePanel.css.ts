@@ -132,14 +132,19 @@ export const title = style({
   lineHeight: 1.35,
 });
 
+/** The continuation of the quote past the title — so give it room to say
+ *  something. Clamped to two lines rather than one nowrap-ellipsis line, which
+ *  used to cut the preview off before it added any information. */
 export const quote = style({
   width: "100%",
   overflow: "hidden",
+  overflowWrap: "anywhere",
   color: "#77727f",
   fontSize: 11,
   lineHeight: 1.4,
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
 });
 
 export const copyButton = style({
