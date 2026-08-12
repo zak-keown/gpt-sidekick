@@ -256,6 +256,63 @@ vocabulary. Two cheaper canaries are available immediately and should land
 regardless: compare the scroller's `scrollHeight` against the captured span,
 and never report `complete` while the scroller is not at both extremes.
 
+## UAT feedback (tester, on the live panel)
+
+### 1. Every card printed its line twice — FIXED
+
+The bold title and the grey preview under it were character-identical. Cause is
+presentational: `titleFrom` builds the title as a **prefix of the item's own
+evidence quote**, and the panel rendered title *and* the full quote. Short quotes
+(most items) rendered identically; long ones showed the same opening words cut
+off by a nowrap ellipsis, so the second line never added information either. The
+preview now shows only the remainder past the title, is omitted when the title
+already is the whole quote, and is clamped to two lines so the tail is readable.
+RED-first: both tests failed with "expected 2 to be 1" before the fix.
+
+### 2. Copy should eventually yield summarized notes — DESIGN CONFLICT, not yet actionable
+
+The tester's intent: Copy should produce "very specific summarized notes of that
+specific chat item", not the raw sentence it copies today (`item.summary`).
+
+**This collides with the Evidence Invariant as currently written.** `evidence.ts`
+requires the displayed title AND summary to be verbatim substrings of an
+evidence quote:
+
+```ts
+candidate.evidence.some((ev) => ev.quote.includes(candidate.summary))
+```
+
+An abstractive summary is by definition not a substring, so it cannot pass this
+check — the item would be dropped and counted. Note the README's claim that the
+extractor seam is "ready for a neural extractor later, **behind the same
+invariant**" does not hold for *abstractive* output: a neural extractor that
+still selects spans is fine, one that rewrites is not.
+
+Resolving this is a genuine product decision, not a code change, and it should
+be made deliberately because it is the project's central promise:
+
+- **(a) Keep it extractive.** Copy stays verbatim; improve *span selection* so
+  the copied sentence is the useful one. Preserves the invariant exactly.
+- **(b) Split the fields.** Keep a verbatim `quote` under the invariant, add a
+  separate generated `note` that is explicitly labelled as generated and is
+  never the thing the invariant vouches for. The trust claim narrows honestly
+  from "everything shown is verbatim" to "the evidence is verbatim".
+- **(c) Change the invariant** to entailment-checked generation. Much larger
+  scope, and it gives up the property that makes the checker cheap and testable.
+
+Recommend (b) if generated notes are wanted soon: it is the only option that
+adds the feature without either weakening the invariant or silently breaking the
+product's stated guarantee.
+
+### 3. Extraction quality observations (no action yet)
+
+All five "Open questions" on the test conversation were the tester's own
+questions to ChatGPT rather than open threads in the discussion. That is the
+already-known "role-aware question detection" backlog item (HANDOFF §3), now
+confirmed on real data — the rules extractor treats any sentence ending in `?`
+as an open question regardless of role or whether it was subsequently answered.
+Worth folding into the labeled dataset when that work starts.
+
 ## Verdict
 
 **RETHINK CAPTURE — do not proceed to Alpha yet.** Not a kill; the failure is
