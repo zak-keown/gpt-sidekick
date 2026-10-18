@@ -9,6 +9,6 @@ it('keeps paragraph boundaries in whitespace-preserving assistant widgets', () =
   const text = canonicalMessageText(selection);
   expect(text).toContain('\nWhich source comes first?\n');
   expect(text).toContain('```\nconst value = 1;\n  keepIndent();\n```');
-  expect(extractOutline([{ id: 'synthetic', conversationId: 'synthetic', role: 'assistant', ordinal: 0, text }]).items.map(item => item.category)).toEqual(['question', 'decision', 'code']);
+  expect(extractOutline([{ id: 'synthetic', conversationId: 'synthetic', role: 'assistant', ordinal: 0, text }]).items.map(item => item.category)).toEqual(['decision', 'code']);
   selection.remove();
 });

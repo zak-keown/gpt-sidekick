@@ -24,14 +24,16 @@ select this repository's `dist` directory. Open or reload a saved conversation o
 Passive capture reads visible messages without scrolling. **Reindex conversation**
 runs a bounded scroll through available turns and restores the previous scroll
 position. Missing, changing, or unavailable turns produce a partial outline.
-Full indexing checks up to 2,000 turns or 45 seconds; reaching either limit is
+Full indexing checks up to 2,000 turns (or scroll samples for a windowed timeline)
+or 45 seconds; reaching either limit is
 reported as partial. It never claims access to unavailable history.
 
 ChatGPT currently serves more than one page layout. The newer windowed timeline
 uses different message attributes and can prepend older history while removing
-off-screen turns. Its outline remains explicitly partial: capturing every
-mounted turn does not prove that the complete conversation has been captured.
-Scroll through older history to accumulate additional messages. See the
+off-screen turns. Reindex first loads the older-history boundary, then sweeps
+the timeline and collects stable message UUIDs. Coverage is complete only when
+both boundaries and a contiguous turn sequence have been verified. Passive
+capture alone remains partial. See the
 [live validation record](docs/live-validation-2026-10-18.md) for observed limits.
 
 For a UI preview with explicitly labeled sample data:
@@ -46,11 +48,16 @@ npm run dev
 Every item has an exact quotation and offsets into a captured message. The core
 checks `message.text.slice(start, end) === quote`, and the title must be a substring
 of that quotation. Source navigation checks the live message against the saved
-canonical text before highlighting it. Edited or unavailable sources produce
+canonical text before highlighting it. An unmounted source is located using a
+scroll hint followed by a bounded timeline search, up to 20 seconds, and a brief
+wait for remounted content to hydrate. Failed
+lookups restore the previous reading position. Edited or unavailable sources produce
 an error rather than highlighting a different message.
 
 Extraction uses deterministic rules; it does not paraphrase or call a model. It
 can miss decisions and does not infer whether later messages supersede them.
+Questions from assistant messages require conversational follow-up wording;
+generic section-heading questions are omitted.
 
 Snapshots live in the extension's IndexedDB. The extension makes no network
 requests. Delete controls remove stored messages and outlines and pause capture
@@ -76,6 +83,8 @@ npm run e2e
 The browser test loads the production extension into Chromium against synthetic
 ChatGPT-shaped pages. It checks capture, full indexing, evidence navigation,
 saved-state reload, tab isolation, deletion, and explicit capture resumption.
+A virtualized fixture also checks delayed history prepending, reading-position
+restoration, and recovery of an unmounted source.
 These checks do not establish compatibility with authenticated ChatGPT's current
 DOM or long-conversation virtualizer.
 

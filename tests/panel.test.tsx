@@ -10,6 +10,21 @@ function transportFor(state = demoState): PanelTransport {
   return { getWindowId: vi.fn(async () => 42), request: vi.fn(async request => request.kind === 'panel/state' ? state : { ok: true as const }), copy: vi.fn(async () => {}) };
 }
 describe('source outline panel', () => {
+  it('keeps source lookup failures visible through refresh without discarding the outline', async () => {
+    const transport = transportFor();
+    transport.request = vi.fn(async request => request.kind === 'panel/state' ? demoState : { ok: false as const, error: 'Source lookup reached its limit.' });
+    render(<App transport={transport} pollMs={100000} />);
+    await screen.findByText('Planning a quieter reading companion');
+    fireEvent.click(screen.getAllByRole('button', { name: 'View source' })[0]!);
+    await screen.findByText('Source lookup reached its limit.');
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(4));
+    expect(screen.getByText('Source lookup reached its limit.')).toBeTruthy();
+    expect(screen.getByText('Planning a quieter reading companion')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Source lookup reached its limit.')).toBeNull();
+  });
+
   it('binds requests to its window, filters quotes and jumps by item identity', async () => {
     const transport = transportFor();
     render(<App transport={transport} pollMs={100000} />);

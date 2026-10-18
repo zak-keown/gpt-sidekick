@@ -29,6 +29,47 @@ it('captures current-layout user and assistant IDs without headers, toolbars, or
   expect(batch.progress).toEqual({ capturedTurns: 1, totalTurns: 1, unstableMessages: 0 });
 });
 
+it('verifies a terminal cancelled turn with only identified user content', async () => {
+  document.body.innerHTML = `<div data-app-action-timeline-scroll><div data-thread-find-target="conversation">${html().replace('data-talvt-turn-state="complete"', 'data-talvt-turn-state="cancelled"')}</div></div>`;
+  document.querySelector('[data-chatgpt-search-unit-key$=assistant]')!.remove();
+  const scroller = document.querySelector<HTMLElement>('[data-app-action-timeline-scroll]')!;
+  Object.defineProperties(scroller, { clientHeight: { value: 100 }, scrollHeight: { value: 100 } });
+  const batches: CaptureBatch[] = [];
+  provider = createChatGPTProvider({ document, window: { location: { href: 'https://chatgpt.com/c/fixture' }, removeEventListener: vi.fn() } as unknown as Window,
+    send: batch => { batches.push(batch); }, boundaryWaitMs: 0, settleMs: 1 });
+  expect(await provider.command({ kind: 'content/reindex' })).toEqual({ ok: true });
+  await vi.waitFor(() => expect(batches.at(-1)?.phase).toBe('ready'));
+  expect(batches.at(-1)?.messages.map(message => message.id)).toEqual(['user-id']);
+  expect(batches.at(-1)?.progress).toMatchObject({ capturedTurns: 1, totalTurns: 1, coverage: 'traversed' });
+});
+
+it('restores the original unmounted reading position after a limited scan prepends history', async () => {
+  document.body.innerHTML = `<div data-app-action-timeline-scroll>${html()}</div>`;
+  const scroller = document.querySelector<HTMLElement>('[data-app-action-timeline-scroll]')!;
+  const initialTurn = document.querySelector('[data-turn-key]')!;
+  initialTurn.getBoundingClientRect = () => ({ top: 100, bottom: 900 } as DOMRect);
+  let top = 500;
+  let height = 1000;
+  let prepended = false;
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 100 }, scrollHeight: { get: () => height },
+    scrollTop: { get: () => top, set: (value: number) => {
+      top = value;
+      if (value === 0 && !prepended) {
+        prepended = true; height += 500;
+        scroller.innerHTML = html().replace('data-turn-key="turn-key"', 'data-turn-key="older-turn"').replaceAll('user-id', 'older-user').replaceAll('assistant-id', 'older-assistant');
+      }
+    } },
+  });
+  const batches: CaptureBatch[] = [];
+  provider = createChatGPTProvider({ document, window: { location: { href: 'https://chatgpt.com/c/fixture' }, removeEventListener: vi.fn() } as unknown as Window,
+    send: batch => { batches.push(batch); }, boundaryWaitMs: 0, settleMs: 1, maxTurns: 2 });
+  await provider.command({ kind: 'content/reindex' });
+  await vi.waitFor(() => expect(batches.at(-1)?.phase).toBe('partial'));
+  expect(prepended).toBe(true);
+  expect(top).toBe(1000);
+});
+
 it('rejects a current-layout content boundary backed by distinct ambiguous message IDs', async () => {
   const { capture } = setup();
   document.querySelector('[data-chatgpt-search-unit-key$=assistant]')!.setAttribute('data-chatgpt-search-message-ids', 'assistant-id different-id');
@@ -54,6 +95,17 @@ it('verifies the exact current-layout assistant source and rejects subsequent te
   expect((document.querySelector('[data-chatgpt-selection-message-id]') as HTMLElement).style.outline).toContain('3px');
   document.querySelector('[data-markdown-text-style] p')!.textContent = 'We decided to wait.';
   expect(await provider!.command(command)).toMatchObject({ ok: false });
+});
+
+it('waits for remounted content to hydrate but still requires the exact saved text', async () => {
+  const { capture } = setup();
+  const message = (await capture()).messages.find(message => message.role === 'assistant')!;
+  const content = document.querySelector('[data-markdown-text-style]')!;
+  const original = content.innerHTML;
+  content.innerHTML = '<p>Loading content</p>';
+  setTimeout(() => { content.innerHTML = original; }, 30);
+  expect(await provider!.command({ kind: 'content/jump', conversationId: 'fixture', message,
+    evidence: { messageId: message.id, quote: message.text, start: 0, end: message.text.length } })).toEqual({ ok: true });
 });
 
 it('quarantines retained current-layout DOM during navigation and accepts replacement content', async () => {

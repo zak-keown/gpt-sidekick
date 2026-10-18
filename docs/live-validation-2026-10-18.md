@@ -69,7 +69,7 @@ The browser regression suite now exercises both layouts against synthetic conten
 Those fixtures contain no personal conversation text. The original legacy-only
 suite passed while the new-layout regression failed; both pass with the fix.
 
-## Verdict
+## Initial verdict
 
 The current-layout mounted capture/source loop works on the supplied conversation.
 The full live-release gate remains open. The new virtualizer needs a bounded
@@ -77,3 +77,57 @@ history traversal and source-recovery design that handles window replacement,
 prepending, and scroll anchoring. Rules extraction also needs usefulness review:
 the seven current items were questions, including assistant section headings and
 an embedded draft, rather than a demonstrated useful decision/action outline.
+
+## Follow-up implementation and checks
+
+The windowed adapter now loads older history to a stable top boundary before
+sweeping down through replacing windows. It waits for loading indicators and
+scroll anchoring to settle. Completion requires stable top and bottom boundaries,
+contiguous unique turn positions, stable message identities, and no streaming.
+Traversal is bounded to 45 seconds or 2,000 samples; source timeline search to
+20 seconds, followed by a brief bounded hydration wait when needed.
+Scroll hints accelerate lookup but never establish identity or bypass exact-text
+validation. Failed lookups restore the original reading position.
+
+The first live traversal discovered 27 turns and conservatively reported 26 as
+complete. Structural DOM inspection identified one terminal `cancelled` turn
+containing a user message and no assistant message. The adapter now recognizes
+that state as terminal when its available content has stable identity. A provider
+regression covers this case.
+
+Extraction now treats assistant questions conservatively and recognizes explicit
+recommendations and imperative next steps as quoted actions. User clarification
+markers produce corrections. The live outline contained actions and corrections
+as well as questions; generic section headings and the previously observed
+embedded draft question were omitted. These are rule-based classifications, not
+a semantic summary or a guarantee that later messages supersede earlier ones.
+
+Automated verification: 69 unit tests, production build, and three Chromium
+extension journeys passed. The third journey starts with four loaded turns,
+prepends older history asynchronously, replaces off-screen windows, verifies all
+nine synthetic turns, restores the bottom reading position, and recovers an
+unmounted exact assistant source. Test fixtures contain no personal content.
+
+## Final follow-up live results
+
+| Check | Result |
+| --- | --- |
+| Full windowed-history traversal | Passed: 27 of 27 discovered turns, “Outline up to date” |
+| Bottom reading-position restoration | Passed: measured bottom gap zero after traversal |
+| Early user source outside mounted window | Passed: absent at bottom, recovered and remounted at turn position zero |
+| Early assistant source outside mounted window | Passed after bounded hydration settling; also passed after extension/conversation reload |
+| Saved evidence drift | Rejected rather than highlighting a different revision |
+| Panel lookup failure persistence | Unit regression passed; polling retains the outline and dismissible error |
+| Limited scan after a history prepend | Provider regression passed; the unmounted reading position accounts for the added history |
+| Live streaming convergence | Still not tested in this completed conversation |
+| Explicit live service-worker stop/restart | Still not tested; extension reload and saved-source recovery passed |
+
+The assistant-source test initially rejected a remounted message whose content
+had not yet settled. The provider now retries exact canonical-text matching for
+a bounded period before reporting a changed source. It still requires the same
+message UUID, role, conversation, and full canonical text. A delayed-hydration
+regression passes, and permanent text drift remains rejected.
+
+These results establish compatibility with this observed conversation and DOM
+version. They do not prove coverage of every ChatGPT layout, branch behavior,
+or future site change. No private transcript text was saved as a fixture.

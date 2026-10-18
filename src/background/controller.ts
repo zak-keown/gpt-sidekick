@@ -24,6 +24,7 @@ export function validBatch(value: unknown): value is CaptureBatch {
       !['passive', 'full'].includes(String(value.mode)) ||
       (value.error !== undefined && !string(value.error, 2000)) || !object(value.progress) ||
       !integer(value.progress.capturedTurns) || !integer(value.progress.totalTurns) || !integer(value.progress.unstableMessages) ||
+      (value.progress.coverage !== undefined && !['mounted', 'traversed'].includes(String(value.progress.coverage))) ||
       !Array.isArray(value.messages) || value.messages.length > 10000) return false;
   const ids = new Set<string>();
   let total = 0;
@@ -31,7 +32,10 @@ export function validBatch(value: unknown): value is CaptureBatch {
     if (!object(message) || !string(message.id, 300) || !message.id || ids.has(message.id) ||
         message.conversationId !== value.conversationId || !['user', 'assistant', 'system', 'tool'].includes(String(message.role)) ||
         !string(message.text, 2_000_000) || !integer(message.ordinal) ||
-        (message.turnId !== undefined && !string(message.turnId, 300))) return false;
+        (message.turnId !== undefined && !string(message.turnId, 300)) ||
+        (message.scrollAnchor !== undefined && (!object(message.scrollAnchor) ||
+          typeof message.scrollAnchor.top !== 'number' || !Number.isFinite(message.scrollAnchor.top) || message.scrollAnchor.top < 0 ||
+          typeof message.scrollAnchor.height !== 'number' || !Number.isFinite(message.scrollAnchor.height) || message.scrollAnchor.height <= 0))) return false;
     ids.add(message.id);
     total += message.text.length;
     return total <= 20_000_000;

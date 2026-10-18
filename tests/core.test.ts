@@ -11,7 +11,7 @@ const batch = (messages: TranscriptMessage[], extra: Partial<CaptureBatch> = {})
 
 describe('extractive outline', () => {
   it('grounds decisions, actions, questions, and corrections at exact offsets', () => {
-    const records = [message('We decided to use local storage.\nTODO: add deletion controls.\nWhich browser comes first?\nCorrection: the first browser is Chrome.')];
+    const records = [message('We decided to use local storage.\nTODO: add deletion controls.\nOne question: Which browser comes first?\nCorrection: the first browser is Chrome.')];
     const { items, droppedCandidates } = extractOutline(records);
     expect(items.map(item => item.category)).toEqual(['decision', 'action', 'question', 'correction']);
     expect(items.every(item => hasValidEvidence(item, records))).toBe(true);

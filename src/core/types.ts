@@ -10,6 +10,8 @@ export interface TranscriptMessage {
   text: string;
   ordinal: number;
   turnId?: string;
+  /** Approximate viewport hint only; identity and canonical text still decide jumps. */
+  scrollAnchor?: { top: number; height: number };
 }
 
 export interface Evidence {
@@ -30,6 +32,7 @@ export interface CaptureProgress {
   capturedTurns: number;
   totalTurns: number;
   unstableMessages: number;
+  coverage?: 'mounted' | 'traversed';
 }
 
 export interface CaptureBatch {

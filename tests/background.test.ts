@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { BackgroundController, type BackgroundAPI, type Sender, type TabInfo } from '../src/background/controller';
+import { BackgroundController, validBatch, type BackgroundAPI, type Sender, type TabInfo } from '../src/background/controller';
 import { IndexedSnapshotStore } from '../src/background/storage';
 import type { CaptureBatch, ContentCommand, Snapshot } from '../src/core/types';
 
@@ -28,6 +28,17 @@ function setup() {
 }
 
 describe('background trust and lifecycle', () => {
+  it('accepts finite scroll hints and rejects invalid traversal metadata', () => {
+    const capture = batch();
+    capture.progress.coverage = 'traversed';
+    capture.messages[0]!.scrollAnchor = { top: 120, height: 900 };
+    expect(validBatch(capture)).toBe(true);
+    for (const scrollAnchor of [{ top: -1, height: 900 }, { top: Infinity, height: 900 }, { top: 0, height: 0 }]) {
+      expect(validBatch({ ...capture, messages: [{ ...capture.messages[0], scrollAnchor }] })).toBe(false);
+    }
+    expect(validBatch({ ...capture, progress: { ...capture.progress, coverage: 'unknown' } })).toBe(false);
+  });
+
   it('requires the exact panel origin and derives the active tab within its window', async () => {
     const { controller } = setup();
     expect(await controller.handle({ kind: 'panel/state', windowId: 20, tabId: 1 }, panel)).toMatchObject({ tabId: 2, supported: true, snapshot: null });

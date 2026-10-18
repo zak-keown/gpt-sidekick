@@ -28,6 +28,7 @@ const displayCode = (quote: string) => quote.replace(/^\s*```[^\n]*\n/, '').repl
 export function App({ transport = browserTransport, demo = false, pollMs = 1200 }: { transport?: PanelTransport; demo?: boolean; pollMs?: number }) {
   const [state, setState] = useState<PanelState | null>(demo ? demoState : null);
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'all'>('all');
@@ -47,7 +48,7 @@ export function App({ transport = browserTransport, demo = false, pollMs = 1200 
       const next = await transport.request({ kind: 'panel/state', windowId: windowId.current });
       if (!('supported' in next)) throw new Error('Sidekick returned an invalid state.');
       if (mounted.current && generation.current === version) {
-        setState(previous => { if (previous?.tabId !== next.tabId || previous?.snapshot?.conversationId !== next.snapshot?.conversationId) { setConfirm(null); setNotice(''); } return next; });
+        setState(previous => { if (previous && (previous.tabId !== next.tabId || previous.snapshot?.conversationId !== next.snapshot?.conversationId)) { setConfirm(null); setNotice(''); setActionError(''); } return next; });
         setError('');
       }
     } catch (failure) {
@@ -62,7 +63,7 @@ export function App({ transport = browserTransport, demo = false, pollMs = 1200 
     let unsubscribe: (() => void) | undefined;
     void transport.getWindowId().then(id => { if (mounted.current && generation.current === version) {
       windowId.current = id;
-      unsubscribe = transport.subscribe?.(id, () => { ++generation.current; setState(null); setConfirm(null); setNotice(''); setError(''); void refresh(); });
+      unsubscribe = transport.subscribe?.(id, () => { ++generation.current; setState(null); setConfirm(null); setNotice(''); setError(''); setActionError(''); void refresh(); });
       void refresh();
     } }).catch(failure => { if (mounted.current && generation.current === version) { setState(null); setError(errorText(failure)); } });
     const timer = setInterval(() => { if (!document.hidden) void refresh(); }, pollMs);
@@ -76,12 +77,12 @@ export function App({ transport = browserTransport, demo = false, pollMs = 1200 
     if (demo) { setNotice('Preview only. Open Sidekick on ChatGPT to use this action.'); setConfirm(null); return; }
     if (windowId.current === undefined) return;
     const version = ++generation.current;
-    setBusy(true); setNotice(''); setError('');
+    setBusy(true); setNotice(kind === 'panel/jump' ? 'Locating source…' : ''); setError(''); setActionError('');
     try {
       const result = await transport.request(kind === 'panel/jump' ? { kind, windowId: windowId.current, itemId: itemId! } : { kind, windowId: windowId.current });
       if (!('ok' in result) || !result.ok) throw new Error('error' in result ? result.error : 'Sidekick returned an invalid response.');
       if (mounted.current && version === generation.current) { setNotice(kind === 'panel/jump' ? 'Source located in the conversation.' : kind === 'panel/reindex' ? 'Reading the conversation again.' : 'Saved data deleted.'); if (kind === 'panel/delete' || kind === 'panel/delete-all') setState(null); }
-    } catch (failure) { if (mounted.current && version === generation.current) { setState(null); setError(errorText(failure)); } }
+    } catch (failure) { if (mounted.current && version === generation.current) { setNotice(''); setActionError(errorText(failure)); } }
     finally { if (mounted.current) { setBusy(false); setConfirm(null); } void refresh(); }
   };
   const copy = async (text: string) => { try { await transport.copy(text); setNotice('Copied to clipboard.'); } catch { setNotice('Could not copy. Check clipboard permission and try again.'); } };
@@ -93,9 +94,10 @@ export function App({ transport = browserTransport, demo = false, pollMs = 1200 
     {demo && <p class="demo">Preview with sample conversation data</p>}
     <section class="conversation" aria-label="Current conversation">
       <h1>{snapshot?.title || 'Your conversation, outlined'}</h1>
-      {snapshot && <><p class={`phase phase-${snapshot.phase}`}>{phases[snapshot.phase]}</p><p class="capture-detail">{snapshot.progress.capturedTurns} of {snapshot.progress.totalTurns} loaded turns captured{snapshot.progress.unstableMessages > 0 ? ` · ${snapshot.progress.unstableMessages} still changing` : ''}</p>{snapshot.phase === 'capturing' && snapshot.progress.totalTurns > 0 && <progress aria-label="Conversation capture" value={snapshot.progress.capturedTurns} max={snapshot.progress.totalTurns} />}{snapshot.phase === 'partial' && <p class="hint">Earlier or virtualized messages may be missing. Load more of the conversation, then reindex.</p>}{snapshot.error && <p role="alert" class="error">{snapshot.error}</p>}</>}
+      {snapshot && <><p class={`phase phase-${snapshot.phase}`}>{phases[snapshot.phase]}</p><p class="capture-detail">{snapshot.progress.capturedTurns} of {snapshot.progress.totalTurns} {snapshot.progress.coverage === 'traversed' ? 'discovered' : 'loaded'} turns captured{snapshot.progress.unstableMessages > 0 ? ` · ${snapshot.progress.unstableMessages} still changing` : ''}</p>{snapshot.phase === 'capturing' && snapshot.progress.totalTurns > 0 && <progress aria-label="Conversation capture" value={snapshot.progress.coverage === 'traversed' ? undefined : snapshot.progress.capturedTurns} max={snapshot.progress.totalTurns} />}{snapshot.phase === 'partial' && <p class="hint">Earlier or virtualized messages may be missing. Load more of the conversation, then reindex.</p>}{snapshot.error && <p role="alert" class="error">{snapshot.error}</p>}</>}
     </section>
     {(error || state?.error) && <div class="error" role="alert"><p>{error || state?.error}</p><button onClick={() => void refresh()}>Try again</button></div>}
+    {actionError && <div class="error" role="alert"><p>{actionError}</p><button onClick={() => setActionError('')}>Dismiss</button></div>}
     <p class="notice" role="status" aria-live="polite">{notice}</p>
     {!state && !error && <p class="empty">Connecting to this window’s conversation…</p>}
     {state && !state.supported && <div class="empty"><h2>Open a ChatGPT conversation</h2><p>Sidekick follows the active tab in this window. Open a saved conversation on chatgpt.com to build its outline.</p></div>}

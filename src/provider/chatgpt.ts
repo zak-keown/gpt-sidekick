@@ -1,4 +1,5 @@
 import { conversationIdFromUrl, type CaptureBatch, type CommandResult, type ContentCommand, type Role, type TranscriptMessage } from '../core/types';
+import { walkTimeline } from './timeline';
 
 const turnSelector = '[data-turn-id],[data-turn-key]';
 const messageSelector = '[data-message-author-role],[data-user-message-bubble],[data-chatgpt-selection-message-id]';
@@ -58,6 +59,8 @@ export interface ProviderOptions {
   settleMs?: number;
   maxTurns?: number;
   maxScanMs?: number;
+  maxJumpMs?: number;
+  boundaryWaitMs?: number;
 }
 
 export interface ChatGPTProvider {
@@ -83,6 +86,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
   let navigationTimer: ReturnType<typeof setInterval> | undefined;
   let messages = new Map<string, TranscriptMessage>();
   let indexedTurnIds: string[] | undefined;
+  let indexedModernTurns: string[] | undefined;
   let delivery = Promise.resolve();
   let highlighted: { element: HTMLElement; original: string; timer: ReturnType<typeof setTimeout> } | undefined;
   type RouteNode = { element: Element; attribute: string; value: string | null };
@@ -117,6 +121,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     sequence = 0;
     messages = new Map();
     indexedTurnIds = undefined;
+    indexedModernTurns = undefined;
   }
 
   function navigate(): void {
@@ -188,19 +193,22 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       }
       if (seen.has(identity.id)) continue;
       seen.add(identity.id);
-      rows.push({ ...identity, conversationId: current, text, ordinal: order * 100 + index, ...(turnId ? { turnId } : {}) });
+      const scroller = doc.querySelector<HTMLElement>('[data-app-action-timeline-scroll]');
+      const top = scroller ? Math.max(0, scroller.scrollTop + turn.getBoundingClientRect().top - scroller.getBoundingClientRect().top) : 0;
+      const scrollAnchor = scroller && scroller.scrollHeight > 0 ? { top, height: scroller.scrollHeight } : undefined;
+      rows.push({ ...identity, conversationId: current, text, ordinal: order * 100 + index, ...(turnId ? { turnId } : {}), ...(scrollAnchor ? { scrollAnchor } : {}) });
     }
     return { rows, unstable };
   }
 
-  function emit(mode: CaptureBatch['mode'], phase: CaptureBatch['phase'], capturedTurns: number, totalTurns: number, unstableMessages: number, error?: string): void {
+  function emit(mode: CaptureBatch['mode'], phase: CaptureBatch['phase'], capturedTurns: number, totalTurns: number, unstableMessages: number, error?: string, coverage?: 'mounted' | 'traversed'): void {
     if (!current || paused) return;
     const token = generation;
     const batch: CaptureBatch = {
       conversationId: current,
       title: doc.title.replace(/\s*[-–|]\s*ChatGPT\s*$/, '').trim() || 'Conversation',
       messages: Array.from(messages.values()).sort((a, b) => a.ordinal - b.ordinal),
-      mode, phase, progress: { capturedTurns, totalTurns, unstableMessages }, runId, sequence: ++sequence,
+      mode, phase, progress: { capturedTurns, totalTurns, unstableMessages, ...(coverage ? { coverage } : {}) }, runId, sequence: ++sequence,
       ...(error ? { error } : {}),
     };
     delivery = delivery.then(async () => {
@@ -238,10 +246,17 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     // Full indexing establishes coverage. A subsequent stable streaming update
     // can finish that run without demoting an already complete transcript.
     const modern = turns.some(turn => turn.hasAttribute('data-turn-key'));
-    const complete = !modern && coverageEstablished && captured === turns.length && !unstable && !isStreaming();
-    emit('passive', complete ? 'ready' : 'partial', captured, turns.length, unstable,
+    const modernCertificate = indexedModernTurns;
+    if (modern && modernCertificate && turns.some((turn, index) => {
+      const position = modernPosition(turn);
+      return position === undefined || modernCertificate[position] !== turnIdOf(turn) || !readTurn(turn, index).rows.length;
+    })) indexedModernTurns = undefined;
+    const modernComplete = modern && !!indexedModernTurns && !unstable && !isStreaming() && !historyPending();
+    const complete = modernComplete || (!modern && coverageEstablished && captured === turns.length && !unstable && !isStreaming());
+    const count = modernComplete ? indexedModernTurns!.length : captured;
+    emit('passive', complete ? 'ready' : 'partial', count, modernComplete ? count : turns.length, unstable,
       complete ? undefined : isStreaming() ? 'The conversation is still streaming.' :
-        modern ? modernCoverage : turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No recognized conversation turns are available.');
+        modern ? modernCoverage : turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No recognized conversation turns are available.', modernComplete ? 'traversed' : undefined);
   }
 
   function schedule(): void {
@@ -257,6 +272,82 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
 
   const wait = () => new Promise<void>(resolve => setTimeout(resolve, settleMs));
 
+  function modernPosition(turn: Element): number | undefined {
+    const key = turn.querySelector('[data-content-search-turn-key]')?.getAttribute('data-content-search-turn-key') ?? '';
+    const match = /^fallback-turn-(\d+)$/.exec(key);
+    const value = match ? Number(match[1]) : NaN;
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  }
+
+  function historyPending(): boolean {
+    const conversation = doc.querySelector('[data-thread-find-target="conversation"]');
+    return !!conversation && Array.from(conversation.querySelectorAll('[role="status"],[role="alert"]')).some(element =>
+      !element.closest(turnSelector) && !element.closest('[hidden],[aria-hidden="true"]') && !!element.textContent?.trim());
+  }
+
+  /** Reading-position hints are recomputed against the current scroll range. */
+  function readingPosition(): () => void {
+    const scroller = doc.querySelector<HTMLElement>('[data-app-action-timeline-scroll]');
+    if (!scroller) return () => undefined;
+    const oldTop = scroller.scrollTop;
+    const oldHeight = scroller.scrollHeight;
+    const atBottom = oldTop + scroller.clientHeight >= oldHeight - 4;
+    const viewportTop = scroller.getBoundingClientRect().top;
+    const visible = wrappers().find(turn => turn.getBoundingClientRect().bottom > viewportTop + 1);
+    const key = visible ? turnIdOf(visible) : null;
+    const offset = visible ? visible.getBoundingClientRect().top - viewportTop : 0;
+    const conversation = current;
+    return () => {
+      if (current !== conversation || conversationIdFromUrl(win.location.href) !== conversation || !scroller.isConnected) return;
+      const target = key ? wrappers().find(turn => turnIdOf(turn) === key) : undefined;
+      const captured = key ? [...messages.values()].find(message => message.turnId === key && message.scrollAnchor) : undefined;
+      if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+      else if (target) scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+      else if (captured?.scrollAnchor) scroller.scrollTop = Math.max(0, captured.scrollAnchor.top + scroller.scrollHeight - captured.scrollAnchor.height - offset);
+      else scroller.scrollTop = Math.max(0, oldTop + scroller.scrollHeight - oldHeight);
+    };
+  }
+
+  async function indexModern(token: number, conversation: string, scroller: HTMLElement): Promise<void> {
+    const observed = new Map<string, { position?: number; stable: boolean; unstable: number }>();
+    let lastProgress = 0;
+    const observe = () => {
+      const turns = wrappers();
+      for (const [index, turn] of turns.entries()) {
+        const id = turnIdOf(turn);
+        if (!id) continue;
+        const result = readTurn(turn, index);
+        const state = turn.querySelector('[data-talvt-turn-state]')?.getAttribute('data-talvt-turn-state');
+        // A cancelled response is terminal and may leave only the user's message.
+        const stable = result.rows.length > 0 && result.unstable === 0 && (state === 'complete' || state === 'cancelled');
+        observed.set(id, { position: modernPosition(turn), stable, unstable: result.unstable });
+        if (stable) {
+          const ids = new Set(result.rows.map(row => row.id));
+          for (const [messageId, message] of messages) if (message.turnId === id && !ids.has(messageId)) messages.delete(messageId);
+        }
+        for (const row of result.rows) messages.set(row.id, row);
+      }
+      if (Date.now() - lastProgress > 250) {
+        const values = [...observed.values()];
+        emit('full', 'capturing', values.filter(turn => turn.stable).length, observed.size, values.reduce((sum, turn) => sum + turn.unstable, 0), undefined, 'traversed');
+        lastProgress = Date.now();
+      }
+      return { keys: turnIds(turns), pending: historyPending() };
+    };
+    emit('full', 'capturing', 0, 0, 0, undefined, 'traversed');
+    const result = await walkTimeline({ scroller, observe, valid: () => valid(token, conversation), maxMs: options.maxScanMs ?? 45000,
+      maxSteps: options.maxTurns ?? 2000, settleMs: Math.max(settleMs, 120), boundaryWaitMs: options.boundaryWaitMs ?? 1200 });
+    if (!valid(token, conversation)) return;
+    const ordered = [...observed].sort((a, b) => (a[1].position ?? Infinity) - (b[1].position ?? Infinity));
+    const contiguous = ordered.length > 0 && ordered.every(([, turn], index) => turn.position === index && turn.stable);
+    const unstable = ordered.reduce((sum, [, turn]) => sum + turn.unstable, 0);
+    const complete = result.reason === 'end' && result.topConfirmed && result.bottomConfirmed && contiguous && !isStreaming() && !historyPending();
+    if (complete) indexedModernTurns = ordered.map(([id]) => id);
+    emit('full', complete ? 'ready' : 'partial', ordered.filter(([, turn]) => turn.stable).length, ordered.length, unstable,
+      complete ? undefined : result.reason === 'limit' ? 'Indexing reached its time or step limit. Captured history is retained; reindex to try again.' :
+        'Some history boundaries or message positions could not be verified. Captured history is retained.', 'traversed');
+  }
+
   async function fullIndex(): Promise<void> {
     newRun();
     if (!current) return;
@@ -268,6 +359,18 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     const conversation = current;
     const token = generation;
     const turns = wrappers();
+    const modernScroller = turns.some(turn => turn.hasAttribute('data-turn-key')) ? doc.querySelector<HTMLElement>('[data-app-action-timeline-scroll]') : null;
+    if (modernScroller) {
+      const restore = readingPosition();
+      restoreScanScroll = restore;
+      try { await indexModern(token, conversation, modernScroller); }
+      catch (error) { if (valid(token, conversation)) emit('full', 'failed', 0, 0, 0, error instanceof Error ? error.message : 'History traversal failed.', 'traversed'); }
+      finally {
+        if (restoreScanScroll === restore) { restore(); restoreScanScroll = undefined; }
+        if (valid(token, conversation)) scanning = false;
+      }
+      return;
+    }
     const scrollPositions = Array.from(doc.querySelectorAll<HTMLElement>('*'))
       .filter(element => element.scrollTop !== 0 || element.scrollLeft !== 0 || element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)
       .map(element => ({ element, top: element.scrollTop, left: element.scrollLeft }));
@@ -373,8 +476,49 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         }
       }
     }
-    if (!element) return { ok: false, error: 'The source message is not currently available.' };
-    if (!valid(token, conversation) || canonicalMessageText(element) !== message.text || messageIdentity(element, current)?.role !== message.role) {
+    let restoreFailedLookup: (() => void) | undefined;
+    const scroller = doc.querySelector<HTMLElement>('[data-app-action-timeline-scroll]');
+    if (!element && scroller && wrappers().some(turn => turn.hasAttribute('data-turn-key'))) {
+      const restore = readingPosition();
+      restoreFailedLookup = restore;
+      restoreScanScroll = restore;
+      scanning = true;
+      try {
+        if (message.scrollAnchor) {
+          // Layout changes or a prepend can shift this hint. It never establishes identity.
+          const ratio = scroller.scrollHeight / message.scrollAnchor.height;
+          scroller.scrollTop = Math.max(0, message.scrollAnchor.top * ratio);
+          await wait();
+          if (!valid(token, conversation)) return { ok: false, error: 'Conversation changed while locating the source.' };
+          element = findMessage();
+        }
+        if (!element) {
+          await walkTimeline({ scroller, observe: () => ({ keys: turnIds(wrappers()), found: !!findMessage(), pending: historyPending() }),
+            valid: () => valid(token, conversation), maxMs: options.maxJumpMs ?? 20000, settleMs: Math.max(settleMs, 120),
+            boundaryWaitMs: options.boundaryWaitMs ?? 1200, maxSteps: options.maxTurns ?? 2000 });
+          if (valid(token, conversation)) element = findMessage();
+        }
+      } catch {
+        restore();
+        return { ok: false, error: 'Source lookup failed. The previous reading position was restored.' };
+      } finally {
+        if (restoreScanScroll === restore) restoreScanScroll = undefined;
+        if (valid(token, conversation)) { scanning = false; schedule(); }
+      }
+    }
+    // A remounted message boundary can precede hydration of its widgets. Wait
+    // briefly for the exact saved text; never accept a merely similar revision.
+    if (element?.hasAttribute('data-chatgpt-selection-message-id') && canonicalMessageText(element) !== message.text) {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await wait();
+        if (!valid(token, conversation)) { restoreFailedLookup?.(); return { ok: false, error: 'Conversation changed while locating the source.' }; }
+        element = findMessage();
+        if (element && canonicalMessageText(element) === message.text) break;
+      }
+    }
+    if (!element) { restoreFailedLookup?.(); return { ok: false, error: 'The source message could not be recovered within the lookup limit. The previous reading position was restored.' }; }
+    if (!valid(token, conversation) || !element.isConnected || canonicalMessageText(element) !== message.text || messageIdentity(element, current)?.role !== message.role) {
+      restoreFailedLookup?.();
       return { ok: false, error: 'The source message changed. Index the conversation again.' };
     }
     element.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
