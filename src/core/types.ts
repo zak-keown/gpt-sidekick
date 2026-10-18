@@ -69,6 +69,7 @@ export interface PanelState {
 export type PanelRequest =
   | { kind: 'panel/state'; windowId: number }
   | { kind: 'panel/reindex'; windowId: number }
+  | { kind: 'panel/cancel'; windowId: number }
   | { kind: 'panel/jump'; windowId: number; itemId: string }
   | { kind: 'panel/delete'; windowId: number }
   | { kind: 'panel/delete-all'; windowId: number };
@@ -76,6 +77,7 @@ export type PanelRequest =
 export type ContentEvent = { kind: 'content/capture'; batch: CaptureBatch };
 export type ContentCommand =
   | { kind: 'content/reindex' }
+  | { kind: 'content/cancel' }
   | { kind: 'content/jump'; conversationId: string; message: TranscriptMessage; evidence: Evidence }
   | { kind: 'content/reset' };
 export type CommandResult = { ok: true } | { ok: false; error: string };

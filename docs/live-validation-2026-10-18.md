@@ -202,3 +202,38 @@ used authored content in temporary profiles. The user's existing conversation
 was not opened or modified during this follow-up. The existing authenticated
 streaming and worker-stop gates remain open, as does real-user usefulness
 assessment on additional representative conversations.
+
+## User-controlled indexing cancellation
+
+The panel now provides a pinned **Stop indexing** control during active capture. It retains saved
+sources and the scan's last known progress checkpoint, restores the reading
+position, and reports partial coverage. Passive message capture continues, with
+the stopped status retained until a fresh reindex or conversation navigation.
+Copying, filtering, and deletion stay available; another reindex and source
+jumps are disabled while the scan is active.
+
+Cancellation is a separate content command. It invalidates queued and running
+scan generations without clearing the transcript or the deletion pause. The
+background sends it only to the authorized active tab in the panel's window and
+rejects attempts to cancel another tab's capture ownership. Its final partial
+batch uses the current run with a higher sequence; delayed older batches cannot
+overwrite it. A late cancellation refreshes the provider's current state while
+preserving completed coverage. If the worker lost the original completion
+delivery, this refresh sends the verified full transcript again instead of
+leaving the panel stuck in its older capturing state.
+
+Unit regressions cover queued cancellation, retained sources and progress,
+restoration, immediate handoff to a newer scan, idle cancellation, ownership,
+sequence gaps, and deletion-pause preservation. The production-extension browser
+test blocks a pending history load, stops indexing, checks retention and reading
+position, then releases the exact blocked load. It observes capture traffic and
+checks that the cancelled run emits neither further progress nor readiness. A
+new scan then captures all nine synthetic turns successfully. A narrow 360px-wide
+panel is scrolled to the end of its long outline during capture; the test checks
+that the pinned Stop control remains inside the viewport.
+
+Verification: type checking, production build, all 85 unit tests, all six browser
+journeys, and the 24-item synthetic extraction evaluation passed. This follow-up
+used temporary browser profiles and synthetic content only. Existing live gates
+for clean authenticated lifecycle checks, native focus transitions, and real-user
+outline usefulness remain open.

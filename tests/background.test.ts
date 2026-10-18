@@ -28,6 +28,34 @@ function setup() {
 }
 
 describe('background trust and lifecycle', () => {
+  it('routes cancellation to its authorized window and owner without changing deletion policy', async () => {
+    const { controller, tabs, store, sent } = setup();
+    await controller.handle({ kind: 'content/capture', batch: batch(1) }, content);
+    const policy = await store.getPolicy();
+    expect(await controller.handle({ kind: 'panel/cancel', windowId: 10 }, panel)).toEqual({ ok: true });
+    expect(sent).toEqual([{ id: 1, command: { kind: 'content/cancel' } }]);
+    expect(await store.getPolicy()).toEqual(policy);
+    tabs.set(2, { id: 2, windowId: 20, url: 'https://chatgpt.com/c/one' });
+    expect(await controller.handle({ kind: 'panel/cancel', windowId: 20 }, panel)).toMatchObject({ ok: false });
+    expect(await controller.handle({ kind: 'panel/cancel', windowId: 10 }, { ...panel, url: `${panel.url}?spoof` })).toMatchObject({ ok: false });
+    expect(sent).toHaveLength(1);
+    await controller.handle({ kind: 'panel/delete', windowId: 10 }, panel);
+    const paused = await store.getPolicy();
+    await controller.handle({ kind: 'panel/cancel', windowId: 10 }, panel);
+    expect(await store.getPolicy()).toEqual(paused);
+    expect(await controller.handle({ kind: 'content/capture', batch: batch(2) }, content)).toMatchObject({ ok: false });
+    expect(await store.get('one')).toBeNull();
+  });
+
+  it('accepts cancellation sequence gaps and rejects older delayed scan batches', async () => {
+    const { controller, store } = setup();
+    await controller.handle({ kind: 'content/capture', batch: { ...batch(1), mode: 'full', phase: 'capturing' } }, content);
+    const stopped = { ...batch(5), mode: 'full', phase: 'partial', error: 'Indexing stopped. Captured sources are retained.' };
+    expect(await controller.handle({ kind: 'content/capture', batch: stopped }, content)).toEqual({ ok: true });
+    expect(await controller.handle({ kind: 'content/capture', batch: batch(4) }, content)).toMatchObject({ ok: false });
+    expect(await store.get('one')).toMatchObject({ phase: 'partial', error: stopped.error });
+  });
+
   it('accepts finite scroll hints and rejects invalid traversal metadata', () => {
     const capture = batch();
     capture.progress.coverage = 'traversed';

@@ -112,7 +112,7 @@ export class BackgroundController {
     if (!object(payload)) throw new Error('Invalid request');
     if (payload.kind === 'content/capture') return this.capture(payload.batch, sender);
     if (sender.id !== this.api.runtimeId || sender.url !== this.api.panelUrl) throw new Error('Unauthorized panel');
-    if (!['panel/state', 'panel/reindex', 'panel/jump', 'panel/delete', 'panel/delete-all'].includes(String(payload.kind))) throw new Error('Unknown request');
+    if (!['panel/state', 'panel/reindex', 'panel/cancel', 'panel/jump', 'panel/delete', 'panel/delete-all'].includes(String(payload.kind))) throw new Error('Unknown request');
     const tab = await this.active(payload.windowId);
     if (payload.kind === 'panel/state') return this.state(tab);
     if (payload.kind === 'panel/delete-all') {
@@ -130,6 +130,12 @@ export class BackgroundController {
     }
     const id = conversationIdFromUrl(tab.url ?? '');
     if (!id || !integer(tab.id)) throw new Error('Open a ChatGPT conversation');
+    if (payload.kind === 'panel/cancel') {
+      const owner = this.owners.get(id);
+      if (owner !== undefined && owner !== tab.id) throw new Error('Index this tab to take over conversation capture');
+      if (conversationIdFromUrl((await this.api.getTab(tab.id)).url ?? '') !== id) throw new Error('Conversation changed');
+      return this.api.send(tab.id, { kind: 'content/cancel' });
+    }
     if (payload.kind === 'panel/delete') {
       this.pausedConversations.add(id);
       this.resumedConversations.delete(id);

@@ -28,6 +28,11 @@ Full indexing checks up to 2,000 turns (or scroll samples for a windowed timelin
 or 45 seconds; reaching either limit is
 reported as partial. It never claims access to unavailable history.
 
+During a scan, a pinned **Stop indexing** control retains captured sources and the last progress
+checkpoint, restores the reading position, and leaves coverage partial. Reindex
+starts a fresh history check. Copying, filtering, and deletion remain available
+while indexing; source jumps wait until the scan finishes or is stopped.
+
 When a sweep verifies history while an identified response is still streaming,
 Sidekick waits for that turn to finish and updates the outline without another
 full scan. An unfinished turn stays pending even while it is off-screen.
@@ -91,6 +96,9 @@ ChatGPT-shaped pages. It checks capture, full indexing, evidence navigation,
 saved-state reload, tab isolation, deletion, and explicit capture resumption.
 A virtualized fixture also checks delayed history prepending, reading-position
 restoration, and recovery of an unmounted source.
+The cancellation journey holds an older-history load, stops the scan, then
+releases that load to check that cancelled work cannot resume or claim completion.
+It also verifies that a fresh scan succeeds afterward.
 The lifecycle journey verifies streaming completion, actual service-worker
 termination and restart, saved-state reads before new capture, continued capture
 from the existing page, and durable deletion pause after a page reload.

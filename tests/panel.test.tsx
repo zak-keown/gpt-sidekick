@@ -10,6 +10,30 @@ function transportFor(state = demoState): PanelTransport {
   return { getWindowId: vi.fn(async () => 42), request: vi.fn(async request => request.kind === 'panel/state' ? state : { ok: true as const }), copy: vi.fn(async () => {}) };
 }
 describe('source outline panel', () => {
+  it('stops indexing in its own window and retains captured sources', async () => {
+    let current: PanelState = { ...demoState, snapshot: { ...demoState.snapshot!, phase: 'capturing' } };
+    const transport = transportFor(current);
+    transport.request = vi.fn(async request => {
+      if (request.kind === 'panel/state') return current;
+      if (request.kind === 'panel/cancel') current = { ...current, snapshot: { ...current.snapshot!, phase: 'partial' } };
+      return { ok: true as const };
+    });
+    render(<App transport={transport} pollMs={100000} />);
+    await screen.findByText('Reading the conversation');
+    expect((screen.getByRole('button', { name: 'Reindex conversation' }) as HTMLButtonElement).disabled).toBe(true);
+    for (const button of screen.getAllByRole('button', { name: 'View source' })) expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Delete this outline' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Copy outline' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop indexing' }));
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith({ kind: 'panel/cancel', windowId: 42 }));
+    await screen.findByText('Indexing stopped. Captured sources are retained.');
+    await screen.findByText('History coverage is partial');
+    expect(screen.getByText('Keep the conversation on this device.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Stop indexing' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Reindex conversation' }) as HTMLButtonElement).disabled).toBe(false);
+    for (const button of screen.getAllByRole('button', { name: 'View source' })) expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('keeps source lookup failures visible through refresh without discarding the outline', async () => {
     const transport = transportFor();
     transport.request = vi.fn(async request => request.kind === 'panel/state' ? demoState : { ok: false as const, error: 'Source lookup reached its limit.' });

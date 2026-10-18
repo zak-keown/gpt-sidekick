@@ -44,6 +44,85 @@ async function flush() {
 }
 
 describe('ChatGPT provider', () => {
+  it('cancels queued indexing and preserves completed coverage when cancellation arrives late', async () => {
+    document.body.innerHTML = turn('one', 'We decided to ship.');
+    const { provider, batches, scrollTo } = setup();
+    await provider.command({ kind: 'content/reindex' });
+    expect(await provider.command({ kind: 'content/cancel' })).toEqual({ ok: true });
+    await flush();
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({ phase: 'partial', sequence: 1, error: 'Indexing stopped. Captured sources are retained.' });
+    expect(scrollTo).not.toHaveBeenCalled();
+    await provider.command({ kind: 'content/reindex' });
+    await flush();
+    expect(batches.at(-1)?.phase).toBe('ready');
+    const count = batches.length;
+    await provider.command({ kind: 'content/cancel' });
+    await flush();
+    expect(batches).toHaveLength(count + 1);
+    expect(batches.at(-1)).toMatchObject({ phase: 'ready', mode: 'full' });
+    provider.capture();
+    await flush();
+    expect(batches.at(-1)?.phase).toBe('ready');
+  });
+
+  it('recovers a lost completion update when a stale panel asks to stop an already finished scan', async () => {
+    document.body.innerHTML = turn('one', 'We decided to ship.');
+    let deliverCompletion = false;
+    const delivered: CaptureBatch[] = [];
+    const { provider } = setup({ send: (batch: CaptureBatch) => {
+      if (batch.phase === 'ready' && !deliverCompletion) return Promise.reject(new Error('Worker disconnected'));
+      delivered.push(batch);
+    } });
+    await provider.command({ kind: 'content/reindex' });
+    await flush();
+    expect(delivered.at(-1)?.phase).toBe('capturing');
+    deliverCompletion = true;
+    await provider.command({ kind: 'content/cancel' });
+    await flush();
+    expect(delivered.at(-1)).toMatchObject({ phase: 'ready', mode: 'full' });
+    expect(delivered.at(-1)?.messages[0]?.text).toBe('We decided to ship.');
+  });
+
+  it('retains captured progress and prevents an old cancelled scan from restoring over a newer scan', async () => {
+    document.body.innerHTML = `<div id="scroller">${turn('one', 'We decided to ship.')}<article data-turn-id="two"></article></div>`;
+    const scroller = document.getElementById('scroller')!;
+    scroller.scrollTop = 80;
+    const second = document.querySelector('[data-turn-id="two"]')!;
+    Object.assign(second, { scrollIntoView: () => {
+      scroller.scrollTop = 500;
+      setTimeout(() => { second.innerHTML = '<div data-message-author-role="user" data-message-id="later"><div data-message-content>Which source is next?</div></div>'; }, 5);
+    } });
+    const { provider, batches } = setup({ settleMs: 20 });
+    await provider.command({ kind: 'content/reindex' });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(scroller.scrollTop).toBe(500);
+    const oldRun = batches.at(-1)!.runId;
+    await provider.command({ kind: 'content/cancel' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scroller.scrollTop).toBe(80);
+    expect(batches.at(-1)).toMatchObject({ phase: 'partial', runId: oldRun, progress: { capturedTurns: 1, totalTurns: 2 } });
+    expect(batches.at(-1)?.messages[0]?.text).toBe('We decided to ship.');
+    const stoppedAt = batches.length;
+    await provider.command({ kind: 'content/reindex' });
+    await vi.advanceTimersByTimeAsync(19);
+    expect(scroller.scrollTop).toBe(500);
+    await flush();
+    expect(batches.slice(stoppedAt).some(batch => batch.runId === oldRun)).toBe(false);
+    expect(batches.at(-1)?.phase).toBe('ready');
+    expect(scroller.scrollTop).toBe(80);
+  });
+
+  it('does not resume capture after deletion when indexing is cancelled', async () => {
+    document.body.innerHTML = turn('one', 'Private source');
+    const { provider, batches } = setup();
+    await provider.command({ kind: 'content/reset' });
+    await provider.command({ kind: 'content/cancel' });
+    provider.capture();
+    await flush();
+    expect(batches).toEqual([]);
+  });
+
   it('captures canonical content with stable IDs, preserving fenced code and excluding controls', async () => {
     document.body.innerHTML = turn('one', '<p>We decided to ship.</p><div><div>python<button>Copy code</button></div><pre><code>if True:\n  ship()\n\n  done()</code></pre></div><button>Good response</button><span hidden>Hidden</span>');
     const { provider, batches } = setup();

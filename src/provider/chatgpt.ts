@@ -1,10 +1,11 @@
-import { conversationIdFromUrl, type CaptureBatch, type CommandResult, type ContentCommand, type Role, type TranscriptMessage } from '../core/types';
+import { conversationIdFromUrl, type CaptureBatch, type CaptureProgress, type CommandResult, type ContentCommand, type Role, type TranscriptMessage } from '../core/types';
 import { walkTimeline } from './timeline';
 
 const turnSelector = '[data-turn-id],[data-turn-key]';
 const messageSelector = '[data-message-author-role],[data-user-message-bubble],[data-chatgpt-selection-message-id]';
 const turnIdOf = (turn: Element): string | null => turn.getAttribute('data-turn-id') ?? turn.getAttribute('data-turn-key');
 const modernCoverage = 'Captured mounted messages. This timeline loads and virtualizes earlier history; complete conversation coverage is not verified.';
+const stoppedMessage = 'Indexing stopped. Captured sources are retained.';
 
 /** Current-layout search units may repeat one ID, but distinct IDs are ambiguous. */
 function messageIdentity(element: Element, conversationId: string | null): { id: string; role: Role } | null {
@@ -80,6 +81,10 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
   let sequence = 0;
   let paused = false;
   let scanning = false;
+  let indexing = false;
+  let indexQueued = false;
+  let lastScanProgress: CaptureProgress | undefined;
+  let stoppedProgress: CaptureProgress | undefined;
   let started = false;
   let observer: MutationObserver | undefined;
   let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -113,6 +118,8 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     restoreScanScroll = undefined;
     generation++;
     scanning = false;
+    indexing = false;
+    indexQueued = false;
     if (debounce) clearTimeout(debounce);
     debounce = undefined;
   }
@@ -126,6 +133,8 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     indexedModernTurns = undefined;
     incompleteModernTurns.clear();
     replaceWhenComplete = false;
+    lastScanProgress = undefined;
+    stoppedProgress = undefined;
   }
 
   function navigate(): void {
@@ -215,6 +224,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       mode, phase, progress: { capturedTurns, totalTurns, unstableMessages, ...(coverage ? { coverage } : {}) }, runId, sequence: ++sequence,
       ...(error ? { error } : {}),
     };
+    if (mode === 'full' && phase === 'capturing') lastScanProgress = batch.progress;
     delivery = delivery.then(async () => {
       if (token === generation && !paused) await options.send(batch);
     }).catch(() => { /* A disconnected worker must not stop later captures. */ });
@@ -263,6 +273,10 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     const modernVerified = modern && !!indexedModernTurns;
     const modernComplete = modernVerified && !incompleteModernTurns.size && !unstable && !isStreaming() && !historyPending();
     const complete = modernComplete || (!modern && coverageEstablished && captured === turns.length && !unstable && !isStreaming());
+    if (stoppedProgress) {
+      emit('passive', 'partial', stoppedProgress.capturedTurns, stoppedProgress.totalTurns, stoppedProgress.unstableMessages, stoppedMessage, stoppedProgress.coverage);
+      return;
+    }
     const count = modernVerified ? indexedModernTurns!.length - incompleteModernTurns.size : captured;
     const mode = complete && replaceWhenComplete ? 'full' : 'passive';
     if (complete) replaceWhenComplete = false;
@@ -379,6 +393,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       return;
     }
     scanning = true;
+    indexing = true;
     const conversation = current;
     const token = generation;
     const turns = wrappers();
@@ -390,7 +405,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       catch (error) { if (valid(token, conversation)) emit('full', 'failed', 0, 0, 0, error instanceof Error ? error.message : 'History traversal failed.', 'traversed'); }
       finally {
         if (restoreScanScroll === restore) { restore(); restoreScanScroll = undefined; }
-        if (valid(token, conversation)) scanning = false;
+        if (valid(token, conversation)) { scanning = false; indexing = false; }
       }
       return;
     }
@@ -470,7 +485,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         restore();
         restoreScanScroll = undefined;
       }
-      if (valid(token, conversation)) scanning = false;
+      if (valid(token, conversation)) { scanning = false; indexing = false; }
     }
   }
 
@@ -580,11 +595,29 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         newRun();
         return { ok: true };
       }
+      if (command.kind === 'content/cancel') {
+        if (paused || !current) return { ok: true };
+        if (!indexing && !indexQueued) {
+          // A completed scan's final delivery may have been lost while the
+          // worker disconnected. Refresh its verified state without demoting
+          // coverage, including a full replacement if coverage was established.
+          if (indexedTurnIds || indexedModernTurns) replaceWhenComplete = true;
+          capture();
+          return { ok: true };
+        }
+        const progress = lastScanProgress ?? { capturedTurns: 0, totalTurns: wrappers().length, unstableMessages: 0 };
+        cancel();
+        stoppedProgress = { ...progress };
+        emit('full', 'partial', progress.capturedTurns, progress.totalTurns, progress.unstableMessages, stoppedMessage, progress.coverage);
+        schedule();
+        return { ok: true };
+      }
       if (command.kind === 'content/reindex') {
         if (!current) return { ok: false, error: 'Open a saved ChatGPT conversation first.' };
         paused = false;
         newRun();
         const token = generation;
+        indexQueued = true;
         // Acknowledge immediately; long scans never hold Chrome's message port open.
         setTimeout(() => { if (token === generation && !paused) void fullIndex(); }, 0);
         return { ok: true };
