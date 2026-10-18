@@ -21,7 +21,7 @@ const browserTransport: PanelTransport = {
   },
 };
 const labels: Record<Category, string> = { decision: 'Decisions', action: 'Actions', question: 'Questions', artifact: 'Artifacts', code: 'Code', correction: 'Corrections', note: 'Notes' };
-const phases = { idle: 'Waiting for capture', capturing: 'Reading the conversation', ready: 'Outline up to date', partial: 'Some messages are missing', failed: 'Capture stopped' };
+const phases = { idle: 'Waiting for capture', capturing: 'Reading the conversation', ready: 'Outline up to date', partial: 'History coverage is partial', failed: 'Capture stopped' };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Could not connect to Sidekick.';
 const displayCode = (quote: string) => quote.replace(/^\s*```[^\n]*\n/, '').replace(/\n```\s*$/, '');
 

@@ -1,15 +1,37 @@
 import { conversationIdFromUrl, type CaptureBatch, type CommandResult, type ContentCommand, type Role, type TranscriptMessage } from '../core/types';
 
-const messageSelector = '[data-message-author-role]';
+const turnSelector = '[data-turn-id],[data-turn-key]';
+const messageSelector = '[data-message-author-role],[data-user-message-bubble],[data-chatgpt-selection-message-id]';
+const turnIdOf = (turn: Element): string | null => turn.getAttribute('data-turn-id') ?? turn.getAttribute('data-turn-key');
+const modernCoverage = 'Captured mounted messages. This timeline loads and virtualizes earlier history; complete conversation coverage is not verified.';
+
+/** Current-layout search units may repeat one ID, but distinct IDs are ambiguous. */
+function messageIdentity(element: Element, conversationId: string | null): { id: string; role: Role } | null {
+  if (!conversationId) return null;
+  if (element.hasAttribute('data-message-author-role')) {
+    const id = element.getAttribute('data-message-id');
+    const role = element.getAttribute('data-message-author-role');
+    return id && role && ['user', 'assistant', 'system', 'tool'].includes(role) ? { id, role: role as Role } : null;
+  }
+  const unit = element.closest('[data-chatgpt-search-message-ids]');
+  const ids = [...new Set((unit?.getAttribute('data-chatgpt-search-message-ids') ?? '').trim().split(/\s+/).filter(Boolean))];
+  if (ids.length !== 1 || !ids[0]) return null;
+  const key = unit?.getAttribute('data-chatgpt-search-unit-key') ?? '';
+  if (element.hasAttribute('data-user-message-bubble') && key.endsWith(':user')) return { id: ids[0], role: 'user' };
+  if (element.hasAttribute('data-chatgpt-selection-message-id') && key.endsWith(':assistant')
+    && element.getAttribute('data-chatgpt-selection-conversation-id') === conversationId
+    && element.getAttribute('data-chatgpt-selection-message-id') === ids[0]) return { id: ids[0], role: 'assistant' };
+  return null;
+}
 const excluded = 'button,script,style,noscript,svg,[hidden],[aria-hidden="true"],[role="toolbar"],.sr-only,[data-sidekick-highlight]';
 const blocks = new Set(['P', 'DIV', 'PRE', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'TABLE', 'TR']);
 
 /** The same deterministic canonical text is used for capture and evidence checks. */
 export function canonicalMessageText(message: Element): string {
   if (message.closest('[hidden],[aria-hidden="true"]')) return '';
-  const content = message.querySelector('[data-message-content],.markdown,.whitespace-pre-wrap') ?? message;
-  function visit(node: Node, pre = false): string {
-    if (node.nodeType === 3) return pre ? node.textContent ?? '' : (node.textContent ?? '').replace(/[\t\r\n ]+/g, ' ');
+  const content = message.querySelector('[data-message-content],[data-markdown-text-style="assistant-message"],.markdown,.whitespace-pre-wrap') ?? message;
+  function visit(node: Node, code = false, preserve = false): string {
+    if (node.nodeType === 3) return code || preserve ? node.textContent ?? '' : (node.textContent ?? '').replace(/[\t\r\n ]+/g, ' ');
     if (node.nodeType !== 1) return '';
     const element = node as HTMLElement;
     if (element.matches(excluded)) return '';
@@ -18,10 +40,11 @@ export function canonicalMessageText(message: Element): string {
     if (element.tagName === 'BR') return '\n';
     // Code widgets often put a language label and copy button beside the PRE.
     if (element.tagName !== 'PRE' && !element.querySelector('pre') && element.querySelector('button') && element.parentElement?.querySelector(':scope > pre')) return '';
-    const isPre = pre || element.tagName === 'PRE' || element.classList.contains('whitespace-pre-wrap') || style?.whiteSpace.startsWith('pre') === true;
-    const text = Array.from(element.childNodes, child => visit(child, isPre)).join('');
-    if (element.tagName === 'PRE' && !pre) return `\n\`\`\`\n${text}\n\`\`\`\n`;
-    return !pre && blocks.has(element.tagName) ? `\n${text}\n` : text;
+    const isCode = code || element.tagName === 'PRE';
+    const preserveText = preserve || isCode || element.classList.contains('whitespace-pre-wrap') || style?.whiteSpace.startsWith('pre') === true;
+    const text = Array.from(element.childNodes, child => visit(child, isCode, preserveText)).join('');
+    if (element.tagName === 'PRE' && !code) return `\n\`\`\`\n${text}\n\`\`\`\n`;
+    return !code && blocks.has(element.tagName) ? `\n${text}\n` : text;
   }
   // Trim only the content boundary; preserve indentation and blank lines within code.
   return visit(content).replace(/^\s+|\s+$/g, '');
@@ -118,21 +141,28 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
 
   function snapshotRouteNodes(): RouteNode[] {
     return [
-      ...wrappers().map(element => ({ element, attribute: 'data-turn-id', value: element.getAttribute('data-turn-id') })),
-      ...Array.from(doc.querySelectorAll(messageSelector), element => ({ element, attribute: 'data-message-id', value: element.getAttribute('data-message-id') })),
+      ...wrappers().map(element => {
+        const attribute = element.hasAttribute('data-turn-id') ? 'data-turn-id' : 'data-turn-key';
+        return { element, attribute, value: element.getAttribute(attribute) };
+      }),
+      ...Array.from(doc.querySelectorAll(messageSelector), element => {
+        const host = element.hasAttribute('data-user-message-bubble') ? element.closest('[data-chatgpt-search-message-ids]') ?? element : element;
+        const attribute = host.hasAttribute('data-message-id') ? 'data-message-id' : host.hasAttribute('data-chatgpt-selection-message-id') ? 'data-chatgpt-selection-message-id' : 'data-chatgpt-search-message-ids';
+        return { element: host, attribute, value: host.getAttribute(attribute) };
+      }),
     ];
   }
 
   function wrappers(): Element[] {
-    return Array.from(doc.querySelectorAll('[data-turn-id]')).filter(element => !element.parentElement?.closest('[data-turn-id]'));
+    return Array.from(doc.querySelectorAll(turnSelector)).filter(element => !element.parentElement?.closest(turnSelector));
   }
 
   function isStreaming(): boolean {
-    return !!doc.querySelector('[data-is-streaming="true"],[aria-busy="true"],.result-streaming,[data-testid="stop-button"],[aria-label="Stop generating"]');
+    return !!doc.querySelector('[data-is-streaming="true"],[aria-busy="true"],.result-streaming,[data-testid="stop-button"],[aria-label="Stop generating"],[data-talvt-turn-state="streaming"]');
   }
 
   function turnIds(turns: Element[]): string[] {
-    return turns.map(turn => turn.getAttribute('data-turn-id') ?? '');
+    return turns.map(turn => turnIdOf(turn) ?? '');
   }
 
   function sameTurns(left: string[], right: string[]): boolean {
@@ -144,16 +174,21 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     if (turn.matches(messageSelector)) candidates.unshift(turn);
     const rows: TranscriptMessage[] = [];
     let unstable = 0;
-    const turnId = turn.getAttribute('data-turn-id') ?? undefined;
+    const turnId = turnIdOf(turn) ?? undefined;
+    // This position key is used only for ordering, never as message identity.
+    const position = /^fallback-turn-(\d+)$/.exec(turn.querySelector('[data-content-search-turn-key]')?.getAttribute('data-content-search-turn-key') ?? '');
+    const order = position ? Number(position[1]) : ordinal;
+    const seen = new Set<string>();
     for (const [index, element] of candidates.entries()) {
-      const id = element.getAttribute('data-message-id');
-      const role = element.getAttribute('data-message-author-role');
+      const identity = messageIdentity(element, current);
       const text = canonicalMessageText(element);
-      if (!id || !role || !['user', 'assistant', 'system', 'tool'].includes(role) || !text || !current) {
+      if (!identity || !text || !current) {
         unstable++;
         continue;
       }
-      rows.push({ id, conversationId: current, role: role as Role, text, ordinal: ordinal * 100 + index, ...(turnId ? { turnId } : {}) });
+      if (seen.has(identity.id)) continue;
+      seen.add(identity.id);
+      rows.push({ ...identity, conversationId: current, text, ordinal: order * 100 + index, ...(turnId ? { turnId } : {}) });
     }
     return { rows, unstable };
   }
@@ -189,23 +224,24 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       const result = readTurn(turn, ordinal);
       unstable += result.unstable;
       if (result.rows.length && !result.unstable) captured++;
-      else if (!result.unstable && coverageEstablished && previouslyCapturedTurns.has(turn.getAttribute('data-turn-id') ?? undefined)) captured++;
+      else if (!result.unstable && coverageEstablished && previouslyCapturedTurns.has(turnIdOf(turn) ?? undefined)) captured++;
       if (result.rows.length && !result.unstable) {
         // Regenerating a turn can replace its stable message ID. Retain only
         // the current branch once that turn is mounted and readable again.
         const ids = new Set(result.rows.map(row => row.id));
         for (const [id, message] of messages) {
-          if (message.turnId === turn.getAttribute('data-turn-id') && !ids.has(id)) messages.delete(id);
+          if (message.turnId === turnIdOf(turn) && !ids.has(id)) messages.delete(id);
         }
       }
       for (const row of result.rows) messages.set(row.id, row);
     }
     // Full indexing establishes coverage. A subsequent stable streaming update
     // can finish that run without demoting an already complete transcript.
-    const complete = coverageEstablished && captured === turns.length && !unstable && !isStreaming();
+    const modern = turns.some(turn => turn.hasAttribute('data-turn-key'));
+    const complete = !modern && coverageEstablished && captured === turns.length && !unstable && !isStreaming();
     emit('passive', complete ? 'ready' : 'partial', captured, turns.length, unstable,
       complete ? undefined : isStreaming() ? 'The conversation is still streaming.' :
-        turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No persistent conversation turns are available.');
+        modern ? modernCoverage : turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No recognized conversation turns are available.');
   }
 
   function schedule(): void {
@@ -266,8 +302,8 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         for (let attempt = 0; attempt < 3 && (!result.rows.length || result.unstable); attempt++) {
           await wait();
           if (!valid(token, conversation)) return;
-          const turnId = turn.getAttribute('data-turn-id');
-          const live = wrappers().find(candidate => candidate.getAttribute('data-turn-id') === turnId) ?? turn;
+          const turnId = turnIdOf(turn);
+          const live = wrappers().find(candidate => turnIdOf(candidate) === turnId) ?? turn;
           result = readTurn(live, ordinal);
         }
         unstable += result.unstable;
@@ -294,11 +330,12 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         }
       }
       const covered = turns.length > 0 && captured === turns.length && unstable === 0 && !error;
-      if (covered) indexedTurnIds = turnIds(turns);
+      const modern = turns.some(turn => turn.hasAttribute('data-turn-key'));
+      if (covered && !modern) indexedTurnIds = turnIds(turns);
       const streaming = isStreaming();
-      const complete = covered && !streaming;
+      const complete = covered && !streaming && !modern;
       emit('full', complete ? 'ready' : 'partial', captured, turns.length, unstable,
-        error ?? (complete ? undefined : streaming ? 'The conversation is still streaming.' : 'Some turns are unavailable, empty, or lack stable message IDs.'));
+        error ?? (complete ? undefined : streaming ? 'The conversation is still streaming.' : modern ? modernCoverage : 'Some turns are unavailable, empty, or lack stable message IDs.'));
     } catch (cause) {
       if (valid(token, conversation)) emit('full', 'failed', captured, turns.length, unstable, cause instanceof Error ? cause.message : 'Indexing failed.');
     } finally {
@@ -323,10 +360,10 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     const token = generation;
     const conversation = current;
     if (!conversation) return { ok: false, error: 'Open a saved ChatGPT conversation first.' };
-    const findMessage = () => Array.from(doc.querySelectorAll(messageSelector)).find(element => element.getAttribute('data-message-id') === message.id);
+    const findMessage = () => Array.from(doc.querySelectorAll(messageSelector)).find(element => messageIdentity(element, current)?.id === message.id);
     let element = findMessage();
     if (!element && message.turnId) {
-      const turn = wrappers().find(candidate => candidate.getAttribute('data-turn-id') === message.turnId);
+      const turn = wrappers().find(candidate => turnIdOf(candidate) === message.turnId);
       if (turn) {
         turn.scrollIntoView?.({ block: 'center', behavior: 'instant' });
         for (let attempt = 0; attempt < 3 && !element; attempt++) {
@@ -337,7 +374,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       }
     }
     if (!element) return { ok: false, error: 'The source message is not currently available.' };
-    if (!valid(token, conversation) || canonicalMessageText(element) !== message.text || element.getAttribute('data-message-author-role') !== message.role) {
+    if (!valid(token, conversation) || canonicalMessageText(element) !== message.text || messageIdentity(element, current)?.role !== message.role) {
       return { ok: false, error: 'The source message changed. Index the conversation again.' };
     }
     element.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
@@ -355,7 +392,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       started = true;
       const Observer = (win as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver;
       observer = new Observer(() => { navigate(); schedule(); });
-      observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-message-id', 'data-message-author-role', 'data-turn-id', 'data-is-streaming', 'aria-busy', 'class'] });
+      observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-message-id', 'data-message-author-role', 'data-turn-id', 'data-turn-key', 'data-chatgpt-search-message-ids', 'data-chatgpt-search-unit-key', 'data-chatgpt-selection-message-id', 'data-chatgpt-selection-conversation-id', 'data-is-streaming', 'data-talvt-turn-state', 'aria-busy', 'class'] });
       win.addEventListener('popstate', navigate);
       navigationTimer = setInterval(navigate, 250);
       schedule();

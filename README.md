@@ -27,6 +27,13 @@ position. Missing, changing, or unavailable turns produce a partial outline.
 Full indexing checks up to 2,000 turns or 45 seconds; reaching either limit is
 reported as partial. It never claims access to unavailable history.
 
+ChatGPT currently serves more than one page layout. The newer windowed timeline
+uses different message attributes and can prepend older history while removing
+off-screen turns. Its outline remains explicitly partial: capturing every
+mounted turn does not prove that the complete conversation has been captured.
+Scroll through older history to accumulate additional messages. See the
+[live validation record](docs/live-validation-2026-10-18.md) for observed limits.
+
 For a UI preview with explicitly labeled sample data:
 
 ```sh
