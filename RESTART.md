@@ -51,7 +51,9 @@ ChatGPT DOM. Live long-conversation validation remains an explicit release gate.
    production-extension suite now also verifies actual worker termination and
    streaming convergence.
 2. Measure outline usefulness on three representative conversations before adding
-   a neural extractor or more provider adapters.
+   a neural extractor or more provider adapters. An authored three-conversation
+   synthetic regression set now covers 24 expected items; real-user assessment
+   remains open.
 3. Use observed failures to assign the next bounded developer tasks. Treat the
    archived specs as historical evidence, not requirements that override the
    current product goal or measured behavior.

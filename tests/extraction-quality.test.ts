@@ -14,6 +14,25 @@ function extract(text: string, role: TranscriptMessage['role'] = 'assistant') {
 }
 
 describe('conservative role-aware extraction', () => {
+  it('omits recommendation headings while preserving contextual actions', () => {
+    for (const heading of ['Which ones I would pursue first', 'What I would ask the team', 'Where I would start', 'Options I would consider']) expect(extract(heading)).toEqual([]);
+    for (const recommendation of ['I would pursue the smaller release first.', 'For this release, I would prioritize deletion controls.', 'Given the remaining risks, I would check recovery first.', 'For this release, I would still recommend a local database.']) {
+      const items = extract(recommendation);
+      expect(items.map(item => item.category)).toEqual(['action']);
+      expect(items[0]?.evidence.quote).toBe(recommendation);
+    }
+  });
+  it('recognizes explicit follow-up introductions without scanning inside draft copy', () => {
+    for (const question of ['One more question: Is the deadline fixed?', 'One question that would help: Is this already deployed?', 'One last important question: Do you have a backup?']) expect(extract(question).map(item => item.category)).toEqual(['question']);
+    for (const draft of ['"One more question: Can you revise the quote?"', '> One last important question: Can you revise the quote?', 'Draft: One question that would help: Can you revise the quote?']) expect(extract(draft)).toEqual([]);
+  });
+  it('does not turn hypothetical decisions or explicit examples into commitments', () => {
+    for (const text of ['If we decided to ship today, what would break?', 'Suppose we decided to use remote storage.', 'Example: We decided to remove all storage.', 'We have not decided to remove local storage.']) expect(extract(text)).toEqual([]);
+    expect(extract('We decided not to remove local storage.').map(item => item.category)).toEqual(['decision']);
+    expect(extract('If we decided to ship today, what would break?', 'user').map(item => item.category)).toEqual(['question']);
+    expect(extract('Have we decided to ship today?', 'user').map(item => item.category)).toEqual(['question']);
+    expect(extract('One more question: Have we decided to ship today?').map(item => item.category)).toEqual(['question']);
+  });
   it('retains user questions and explicit assistant follow-ups', () => {
     expect(extract('What would this cost?', 'user').map(item => item.category)).toEqual(['question']);
     for (const question of ['One question: Is the loan fixed-rate?', 'One quick clarification: Is that your current balance?',

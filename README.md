@@ -80,6 +80,7 @@ to reindex rather than an outline from a potentially different message revision.
 ```sh
 npm run typecheck
 npm test
+npm run evaluate
 npm run build
 npx playwright install chromium
 npm run e2e
@@ -93,8 +94,17 @@ restoration, and recovery of an unmounted source.
 The lifecycle journey verifies streaming completion, actual service-worker
 termination and restart, saved-state reads before new capture, continued capture
 from the existing page, and durable deletion pause after a page reload.
+The two-window journey checks independent conversation binding and source routing,
+including an unfocused panel and unsupported-tab switches. It uses extension
+pages in each window as panel surrogates; native docking and OS focus transitions
+still need separate live checks.
 These checks do not establish compatibility with authenticated ChatGPT's current
 DOM or long-conversation virtualizer.
+
+The extraction evaluation uses three authored synthetic conversations with 24
+expected items. It is a regression set, not a real-user usefulness score. See the
+[evaluation record](docs/extraction-evaluation-2026-10-18.md) for measured failures,
+fixes, and remaining limits.
 
 ```text
 src/core          Pure types, extraction, evidence checks, snapshots

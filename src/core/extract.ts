@@ -15,18 +15,22 @@ export function hasValidEvidence(item: OutlineItem, messages: readonly Transcrip
 }
 
 function classify(text: string, role: TranscriptMessage['role']): Category | null {
+  // Explicit examples and draft copy describe another utterance, not a claim
+  // or an open question in this conversation.
+  if (/^(?:>\s*|["“]|(?:draft(?: [^:\n]{1,60})?|example|sample|quote)\s*:)/i.test(text)) return null;
   if (/^(?:correction\b|actually[, :]|i was wrong\b|on second thought\b|let me (?:correct|revise)\b)/i.test(text)) return 'correction';
   if (role === 'user' && /^to (?:be clear|clarify)\s*:/i.test(text)) return 'correction';
-  if (/^decision\s*:/i.test(text) || /\b(?:we (?:have )?decided|i (?:have )?decided|we(?:'|’)ll (?:use|go with)|let(?:'|’)s use|we(?:'|’)re going (?:with|to use))\b/i.test(text)) return 'decision';
+  if (!text.endsWith('?') && !/^(?:if|unless|suppose|imagine|for example)\b/i.test(text) && (/^decision\s*:/i.test(text) || /\b(?:we (?:have )?decided|i (?:have )?decided|we(?:'|’)ll (?:use|go with)|let(?:'|’)s use|we(?:'|’)re going (?:with|to use))\b/i.test(text))) return 'decision';
   if (/^(?:[-*]\s*)?(?:\[[ xX]\]\s*|todo\b|action\s*:|next steps?\s*:|we (?:should|need to)\b|let(?:'|’)s (?!use\b))/i.test(text)) return 'action';
   if (text.endsWith('?') && /[a-z]/i.test(text) && (role === 'user' ||
-    (role === 'assistant' && /^(?:one (?:quick )?(?:question|clarification)\s*:|can you clarify\b|could you\b|do you\b|are you\b)/i.test(text)))) return 'question';
+    (role === 'assistant' && /^(?:one (?:(?:quick|more|last(?: important)?) )?(?:question|clarification)(?: that would help)?\s*:|can you clarify\b|could you\b|do you\b|are you\b)/i.test(text)))) return 'question';
   // Preserve recommendation wording rather than implying a user commitment.
-  if (role === 'assistant' && /\bi would (?:recommend|suggest|pursue|compare|check|confirm|verify|ask|get|start|prioritize|consider|try|test)\b/i.test(text)) return 'action';
+  if (role === 'assistant' && /(?:^|[,;:]\s*)i would (?:(?:also|still) )?(?:recommend|suggest|pursue|compare|check|confirm|verify|ask|get|start|prioritize|consider|try|test)\b/i.test(text)) return 'action';
   if (/^(?:[-*]\s*)?(?:confirm|ask|compare|verify|check|request|review|test)\b/i.test(text) || /^(?:[-*]\s*)?get\s+\S/i.test(text)) return 'action';
-  if (/\b[\w-]+\.(?:md|pdf|docx|xlsx|csv|ts|tsx|js|py|swift|json|html|zip)\b/i.test(text)
+  if (/\b[\w-]+\.(?:md|pdf|docx|xlsx|csv|ts|tsx|js|py|swift|json|html|zip|log|txt)\b/i.test(text)
     && /\b(?:created|saved|attached|generated|wrote|file|artifact)\b/i.test(text)) return 'artifact';
   if (role === 'user' && /^(?:remember|constraint|requirement|note)\s*:/i.test(text)) return 'note';
+  if (/^note\s*:\s*\S/i.test(text)) return 'note';
   return null;
 }
 

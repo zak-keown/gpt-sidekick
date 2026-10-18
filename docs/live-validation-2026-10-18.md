@@ -172,3 +172,33 @@ is not counted as a clean live streaming pass. No private content was added to
 repository fixtures. An explicit worker stop in the authenticated profile also
 remains untested; the isolated lifecycle test above establishes the browser
 mechanism and persistence behavior with synthetic content.
+
+## Extraction and two-window follow-up
+
+The authored extraction regression set contains three synthetic conversations
+and 24 expected items. The baseline missed six and added five unwanted items;
+the revised rules match the answer keys without extra items and retain exact
+source evidence. This is not a real-user usefulness measurement or a held-out
+benchmark. Details and reproduction commands are in
+[the evaluation record](extraction-evaluation-2026-10-18.md).
+
+A fifth isolated production-extension journey verifies two distinct Chrome
+windows in the same profile. Each extension-page panel resolves its own window,
+shows only that window's active conversation, and sends source commands to the
+matching page. It specifically checks an unfocused panel while another window
+is reported focused. Unsupported-tab switches clear only the corresponding
+panel, and source navigation still targets the right page after switching back.
+
+Chrome-created fixture tabs start blank and navigate only after the test harness
+attaches, ensuring their synthetic ChatGPT requests are intercepted. Native
+side-panel docking is not represented by these extension-page surrogates. The
+headless build did not reflect requested OS focus transitions reliably, so a
+focus-change pass is not claimed. Native two-window focus transitions remain a
+live check.
+
+Verification for this follow-up: type checking, production build, all 78 unit
+tests, the 24-item evaluation, and all five browser journeys passed. Every test
+used authored content in temporary profiles. The user's existing conversation
+was not opened or modified during this follow-up. The existing authenticated
+streaming and worker-stop gates remain open, as does real-user usefulness
+assessment on additional representative conversations.
