@@ -35,7 +35,8 @@ ChatGPT DOM. Live long-conversation validation remains an explicit release gate.
 - Fresh single-app build replaces the spike's monorepo orchestration. TypeScript,
   Preact, Vite, and a small extension bundler are sufficient for this milestone.
 - Capture never calls provider backend endpoints. Visible messages accumulate;
-  explicit full indexing checks a bounded set of persistent DOM turns.
+  explicit full indexing traverses a bounded set of timeline windows, checking
+  history boundaries, message identities, and turn ordering.
 - Same-conversation tabs require explicit Reindex to transfer capture ownership.
   The panel does not display another tab's potentially different message revision.
 - IndexedDB commits snapshot/capture order together, and deletion/pause policy
@@ -45,8 +46,10 @@ ChatGPT DOM. Live long-conversation validation remains an explicit release gate.
 
 ## Next work
 
-1. Validate the actual side panel and current authenticated ChatGPT DOM on a long
-   conversation, including streaming, virtualization, and worker restart.
+1. Finish clean authenticated streaming and worker-restart validation. Completed
+   long-thread traversal and off-screen source recovery passed; the isolated
+   production-extension suite now also verifies actual worker termination and
+   streaming convergence.
 2. Measure outline usefulness on three representative conversations before adding
    a neural extractor or more provider adapters.
 3. Use observed failures to assign the next bounded developer tasks. Treat the

@@ -18,6 +18,66 @@ function setup() {
   return { capture, location };
 }
 
+async function indexedStreaming() {
+  const second = html().replaceAll('turn-key="turn-key"', 'turn-key="turn-second"').replaceAll('fallback-turn-0', 'fallback-turn-1')
+    .replaceAll('user-id', 'user-second').replaceAll('assistant-id', 'assistant-second');
+  document.body.innerHTML = `<div data-app-action-timeline-scroll><div data-thread-find-target="conversation">${html().replace('data-talvt-turn-state="complete"', 'data-talvt-turn-state="streaming"')}${second}</div></div>`;
+  const scroller = document.querySelector<HTMLElement>('[data-app-action-timeline-scroll]')!;
+  Object.defineProperties(scroller, { clientHeight: { value: 100 }, scrollHeight: { value: 100 } });
+  const batches: CaptureBatch[] = [];
+  provider = createChatGPTProvider({ document, window: { location: { href: 'https://chatgpt.com/c/fixture' }, removeEventListener: vi.fn() } as unknown as Window,
+    send: batch => { batches.push(batch); }, boundaryWaitMs: 0, settleMs: 1 });
+  await provider.command({ kind: 'content/reindex' });
+  await vi.waitFor(() => expect(batches.at(-1)?.phase).toBe('partial'));
+  const capture = async () => { const count = batches.length; provider!.capture(); await vi.waitFor(() => expect(batches).toHaveLength(count + 1)); return batches.at(-1)!; };
+  return { batches, capture, first: document.querySelector('[data-turn-key="turn-key"]')! };
+}
+
+it('converges a verified streaming sweep and replaces obsolete saved history once', async () => {
+  const { batches, capture, first } = await indexedStreaming();
+  expect(batches.at(-1)?.progress).toMatchObject({ capturedTurns: 1, totalTurns: 2, coverage: 'traversed' });
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'complete');
+  first.querySelector('[data-markdown-text-style] p')!.textContent = 'We decided to ship the finished response.';
+  const completed = await capture();
+  expect(completed).toMatchObject({ phase: 'ready', mode: 'full', progress: { capturedTurns: 2, totalTurns: 2, coverage: 'traversed' } });
+  expect(completed.messages.find(message => message.id === 'assistant-id')?.text).toContain('finished response');
+  expect((await capture()).mode).toBe('passive');
+});
+
+it('keeps an off-screen unfinished turn pending until it remounts with terminal identified content', async () => {
+  const { capture, first } = await indexedStreaming();
+  const parent = first.parentElement!;
+  first.remove();
+  expect(await capture()).toMatchObject({ phase: 'partial', progress: { capturedTurns: 1, totalTurns: 2, coverage: 'traversed' } });
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'unknown');
+  parent.prepend(first);
+  expect((await capture()).phase).toBe('partial');
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'complete');
+  expect((await capture()).phase).toBe('ready');
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'streaming');
+  first.querySelector('[data-chatgpt-search-unit-key$=assistant]')!.setAttribute('data-chatgpt-search-message-ids', 'replacement');
+  first.querySelector('[data-chatgpt-selection-message-id]')!.setAttribute('data-chatgpt-selection-message-id', 'replacement');
+  expect((await capture()).phase).toBe('partial');
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'complete');
+  const regenerated = await capture();
+  expect(regenerated.phase).toBe('ready');
+  expect(regenerated.messages.some(message => message.id === 'assistant-id')).toBe(false);
+});
+
+it('blocks convergence during history loading and invalidates coverage for new turn identities', async () => {
+  const { capture, first } = await indexedStreaming();
+  first.querySelector('[data-talvt-turn-state]')!.setAttribute('data-talvt-turn-state', 'complete');
+  const scope = document.querySelector('[data-thread-find-target]')!;
+  scope.insertAdjacentHTML('beforeend', '<div role="status">Loading older messages</div>');
+  expect((await capture()).phase).toBe('partial');
+  scope.querySelector('[role=status]')!.remove();
+  expect((await capture()).phase).toBe('ready');
+  document.querySelector('[data-turn-key="turn-second"]')!.setAttribute('data-turn-key', 'different-turn');
+  expect((await capture()).phase).toBe('partial');
+  document.querySelector('[data-turn-key="different-turn"]')!.setAttribute('data-turn-key', 'turn-second');
+  expect((await capture()).phase).toBe('partial');
+});
+
 it('captures current-layout user and assistant IDs without headers, toolbars, or duplicate IDs', async () => {
   const { capture } = setup();
   const batch = await capture();

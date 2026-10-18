@@ -87,6 +87,8 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
   let messages = new Map<string, TranscriptMessage>();
   let indexedTurnIds: string[] | undefined;
   let indexedModernTurns: string[] | undefined;
+  let incompleteModernTurns = new Set<string>();
+  let replaceWhenComplete = false;
   let delivery = Promise.resolve();
   let highlighted: { element: HTMLElement; original: string; timer: ReturnType<typeof setTimeout> } | undefined;
   type RouteNode = { element: Element; attribute: string; value: string | null };
@@ -122,6 +124,8 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     messages = new Map();
     indexedTurnIds = undefined;
     indexedModernTurns = undefined;
+    incompleteModernTurns.clear();
+    replaceWhenComplete = false;
   }
 
   function navigate(): void {
@@ -242,6 +246,11 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         }
       }
       for (const row of result.rows) messages.set(row.id, row);
+      if (indexedModernTurns && turn.hasAttribute('data-turn-key')) {
+        const id = turnIdOf(turn)!;
+        if (result.rows.length && !result.unstable && terminalTurn(turn)) incompleteModernTurns.delete(id);
+        else incompleteModernTurns.add(id);
+      }
     }
     // Full indexing establishes coverage. A subsequent stable streaming update
     // can finish that run without demoting an already complete transcript.
@@ -250,13 +259,17 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     if (modern && modernCertificate && turns.some((turn, index) => {
       const position = modernPosition(turn);
       return position === undefined || modernCertificate[position] !== turnIdOf(turn) || !readTurn(turn, index).rows.length;
-    })) indexedModernTurns = undefined;
-    const modernComplete = modern && !!indexedModernTurns && !unstable && !isStreaming() && !historyPending();
+    })) { indexedModernTurns = undefined; incompleteModernTurns.clear(); replaceWhenComplete = false; }
+    const modernVerified = modern && !!indexedModernTurns;
+    const modernComplete = modernVerified && !incompleteModernTurns.size && !unstable && !isStreaming() && !historyPending();
     const complete = modernComplete || (!modern && coverageEstablished && captured === turns.length && !unstable && !isStreaming());
-    const count = modernComplete ? indexedModernTurns!.length : captured;
-    emit('passive', complete ? 'ready' : 'partial', count, modernComplete ? count : turns.length, unstable,
+    const count = modernVerified ? indexedModernTurns!.length - incompleteModernTurns.size : captured;
+    const mode = complete && replaceWhenComplete ? 'full' : 'passive';
+    if (complete) replaceWhenComplete = false;
+    emit(mode, complete ? 'ready' : 'partial', count, modernVerified ? indexedModernTurns!.length : turns.length, unstable,
       complete ? undefined : isStreaming() ? 'The conversation is still streaming.' :
-        modern ? modernCoverage : turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No recognized conversation turns are available.', modernComplete ? 'traversed' : undefined);
+        modernVerified ? 'History was traversed. Waiting for all captured turns to expose complete content.' :
+          modern ? modernCoverage : turns.length ? 'Visible messages captured. Run full indexing to check all available turns.' : 'No recognized conversation turns are available.', modernVerified ? 'traversed' : undefined);
   }
 
   function schedule(): void {
@@ -277,6 +290,11 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
     const match = /^fallback-turn-(\d+)$/.exec(key);
     const value = match ? Number(match[1]) : NaN;
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  }
+
+  function terminalTurn(turn: Element): boolean {
+    const state = turn.querySelector('[data-talvt-turn-state]')?.getAttribute('data-talvt-turn-state');
+    return state === 'complete' || state === 'cancelled';
   }
 
   function historyPending(): boolean {
@@ -309,7 +327,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
   }
 
   async function indexModern(token: number, conversation: string, scroller: HTMLElement): Promise<void> {
-    const observed = new Map<string, { position?: number; stable: boolean; unstable: number }>();
+    const observed = new Map<string, { position?: number; identified: boolean; stable: boolean; unstable: number }>();
     let lastProgress = 0;
     const observe = () => {
       const turns = wrappers();
@@ -317,10 +335,10 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
         const id = turnIdOf(turn);
         if (!id) continue;
         const result = readTurn(turn, index);
-        const state = turn.querySelector('[data-talvt-turn-state]')?.getAttribute('data-talvt-turn-state');
         // A cancelled response is terminal and may leave only the user's message.
-        const stable = result.rows.length > 0 && result.unstable === 0 && (state === 'complete' || state === 'cancelled');
-        observed.set(id, { position: modernPosition(turn), stable, unstable: result.unstable });
+        const identified = result.rows.length > 0 && result.unstable === 0;
+        const stable = identified && terminalTurn(turn);
+        observed.set(id, { position: modernPosition(turn), identified, stable, unstable: result.unstable });
         if (stable) {
           const ids = new Set(result.rows.map(row => row.id));
           for (const [messageId, message] of messages) if (message.turnId === id && !ids.has(messageId)) messages.delete(messageId);
@@ -339,12 +357,17 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       maxSteps: options.maxTurns ?? 2000, settleMs: Math.max(settleMs, 120), boundaryWaitMs: options.boundaryWaitMs ?? 1200 });
     if (!valid(token, conversation)) return;
     const ordered = [...observed].sort((a, b) => (a[1].position ?? Infinity) - (b[1].position ?? Infinity));
-    const contiguous = ordered.length > 0 && ordered.every(([, turn], index) => turn.position === index && turn.stable);
+    const contiguous = ordered.length > 0 && ordered.every(([, turn], index) => turn.position === index && turn.identified);
     const unstable = ordered.reduce((sum, [, turn]) => sum + turn.unstable, 0);
-    const complete = result.reason === 'end' && result.topConfirmed && result.bottomConfirmed && contiguous && !isStreaming() && !historyPending();
-    if (complete) indexedModernTurns = ordered.map(([id]) => id);
+    const verified = result.reason === 'end' && result.topConfirmed && result.bottomConfirmed && contiguous && !historyPending();
+    if (verified) {
+      indexedModernTurns = ordered.map(([id]) => id);
+      incompleteModernTurns = new Set(ordered.filter(([, turn]) => !turn.stable).map(([id]) => id));
+    }
+    const complete = verified && !incompleteModernTurns.size && !isStreaming();
+    replaceWhenComplete = verified && !complete;
     emit('full', complete ? 'ready' : 'partial', ordered.filter(([, turn]) => turn.stable).length, ordered.length, unstable,
-      complete ? undefined : result.reason === 'limit' ? 'Indexing reached its time or step limit. Captured history is retained; reindex to try again.' :
+      complete ? undefined : verified ? 'History was traversed. Waiting for all captured turns to expose complete content.' : result.reason === 'limit' ? 'Indexing reached its time or step limit. Captured history is retained; reindex to try again.' :
         'Some history boundaries or message positions could not be verified. Captured history is retained.', 'traversed');
   }
 
@@ -437,6 +460,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       if (covered && !modern) indexedTurnIds = turnIds(turns);
       const streaming = isStreaming();
       const complete = covered && !streaming && !modern;
+      replaceWhenComplete = covered && streaming && !modern;
       emit('full', complete ? 'ready' : 'partial', captured, turns.length, unstable,
         error ?? (complete ? undefined : streaming ? 'The conversation is still streaming.' : modern ? modernCoverage : 'Some turns are unavailable, empty, or lack stable message IDs.'));
     } catch (cause) {
@@ -536,7 +560,7 @@ export function createChatGPTProvider(options: ProviderOptions): ChatGPTProvider
       started = true;
       const Observer = (win as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver;
       observer = new Observer(() => { navigate(); schedule(); });
-      observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-message-id', 'data-message-author-role', 'data-turn-id', 'data-turn-key', 'data-chatgpt-search-message-ids', 'data-chatgpt-search-unit-key', 'data-chatgpt-selection-message-id', 'data-chatgpt-selection-conversation-id', 'data-is-streaming', 'data-talvt-turn-state', 'aria-busy', 'class'] });
+      observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-message-id', 'data-message-author-role', 'data-turn-id', 'data-turn-key', 'data-content-search-turn-key', 'data-chatgpt-search-message-ids', 'data-chatgpt-search-unit-key', 'data-chatgpt-selection-message-id', 'data-chatgpt-selection-conversation-id', 'data-is-streaming', 'data-talvt-turn-state', 'aria-busy', 'class'] });
       win.addEventListener('popstate', navigate);
       navigationTimer = setInterval(navigate, 250);
       schedule();

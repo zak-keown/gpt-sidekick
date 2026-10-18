@@ -131,3 +131,44 @@ regression passes, and permanent text drift remains rejected.
 These results establish compatibility with this observed conversation and DOM
 version. They do not prove coverage of every ChatGPT layout, branch behavior,
 or future site change. No private transcript text was saved as a fixture.
+
+## Streaming and worker lifecycle follow-up
+
+A modern-layout gap was found: a verified sweep that ended during streaming
+could remain partial after the response finished. History coverage now persists
+separately from completion. Each unfinished turn stays pending until its mounted
+content exposes a recognized terminal status and valid message identity. Losing
+an unfinished turn from the mounted window does not count as completion.
+Regeneration withdraws readiness, and changed turn identities or positions
+invalidate coverage. The position attribute is now observed directly.
+
+When a verified streaming sweep later becomes complete, its first ready batch
+replaces obsolete saved history. Subsequent passive updates accumulate normally.
+The panel distinguishes pending content after traversal from mounted-only
+coverage, and the reindex acknowledgment no longer keeps saying it is reading
+after indexing has finished.
+
+The production-extension lifecycle journey passed with real Chromium worker
+termination, not an extension or page reload as a substitute. It verifies:
+
+- Streaming text is replaced by the completed response without another reindex.
+- A position-only DOM mutation invalidates coverage.
+- The worker reports stopped and its browser target disappears.
+- Reopening the panel reads committed data before any new page mutation.
+- The restarted worker has a fresh JavaScript global, then accepts capture from
+  the existing content script. Chromium reuses its logical target ID, and
+  Playwright does not emit a worker-close event at this stop/start boundary.
+- Deletion remains paused across another worker stop and a fresh content script
+  after page reload, until explicit reindexing.
+
+Final automated result: 72 unit tests, type checking, production build, and all
+four browser journeys passed.
+
+Clean authenticated streaming validation remains open. During the live attempt,
+a synthetic checklist prompt was accidentally submitted to the existing test
+conversation rather than a separate chat. Its response was stopped with explicit
+user approval. The synthetic message remains in that conversation; this attempt
+is not counted as a clean live streaming pass. No private content was added to
+repository fixtures. An explicit worker stop in the authenticated profile also
+remains untested; the isolated lifecycle test above establishes the browser
+mechanism and persistence behavior with synthetic content.

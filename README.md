@@ -28,6 +28,11 @@ Full indexing checks up to 2,000 turns (or scroll samples for a windowed timelin
 or 45 seconds; reaching either limit is
 reported as partial. It never claims access to unavailable history.
 
+When a sweep verifies history while an identified response is still streaming,
+Sidekick waits for that turn to finish and updates the outline without another
+full scan. An unfinished turn stays pending even while it is off-screen.
+New turn identities or changed ordering require a new history check.
+
 ChatGPT currently serves more than one page layout. The newer windowed timeline
 uses different message attributes and can prepend older history while removing
 off-screen turns. Reindex first loads the older-history boundary, then sweeps
@@ -85,6 +90,9 @@ ChatGPT-shaped pages. It checks capture, full indexing, evidence navigation,
 saved-state reload, tab isolation, deletion, and explicit capture resumption.
 A virtualized fixture also checks delayed history prepending, reading-position
 restoration, and recovery of an unmounted source.
+The lifecycle journey verifies streaming completion, actual service-worker
+termination and restart, saved-state reads before new capture, continued capture
+from the existing page, and durable deletion pause after a page reload.
 These checks do not establish compatibility with authenticated ChatGPT's current
 DOM or long-conversation virtualizer.
 
@@ -101,8 +109,12 @@ e2e               Built-extension browser journey
 
 ## Next release gate
 
-Test a real authenticated ChatGPT conversation, including a long virtualized
-thread. Record capture coverage and time, scroll restoration, early/middle/late
-source navigation, streaming convergence, tab/window switching, and behavior
-after a service-worker restart. Keep real fixtures under the ignored
+Completed-thread validation on the supplied authenticated conversation covered
+27 turns, reading-position restoration, and off-screen user and assistant source
+navigation. Clean live streaming validation and an explicit worker restart in
+the authenticated profile remain open. The isolated production-extension suite
+covers those lifecycle paths with synthetic content.
+
+Measure outline usefulness on three representative conversations before extending
+extraction or provider support. Keep real fixtures under the ignored
 `fixtures.local/` directory. Do not commit private transcript data.
