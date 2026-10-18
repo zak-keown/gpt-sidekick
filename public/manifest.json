@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "GPT Sidekick",
+  "description": "Find the decisions, questions, and next steps in your ChatGPT conversations. Every item links to its source.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "tabs", "unlimitedStorage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Open GPT Sidekick" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_scripts": [{
+    "matches": ["https://chatgpt.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"
+  }
+}

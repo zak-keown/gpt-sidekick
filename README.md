@@ -1,108 +1,92 @@
-# GPT-Sidekick
+# GPT Sidekick
 
-A Chrome extension that gives you a **live, source-linked outline** of long ChatGPT
-conversations — so a thread that has scrolled past readability becomes navigable at
-a glance, and every outline item links back to the exact message it came from.
+A local Chrome companion for long ChatGPT conversations. Find decisions, actions,
+questions, artifacts, code, and corrections, then jump back to the exact message
+behind each item.
 
-> **Status:** working spike (ChatGPT × Chrome). The trust core, storage,
-> targeted messaging, explicit re-index, grouped outline UI, copy controls, and
-> source-jump are built and tested. The remaining spike gate is a manual
-> virtualized load-test on live chatgpt.com conversations — see
-> [`HANDOFF.md`](./HANDOFF.md).
+This is a fresh implementation on `restart/fresh-implementation`. The original
+spike is preserved on `main`; historical plans are in [docs/reference](docs/reference).
+See [RESTART.md](RESTART.md) for the delivery approach.
 
-## Why it's different: the Evidence Invariant
+## Run it
 
-The whole point of a summary you can trust is that it can't quietly make things up.
-GPT-Sidekick enforces one rule, everywhere, in code:
+Requires Node 22.12 or newer and Chrome 116 or newer.
 
-> **No outline item may exist without a link to the exact source message, where the
-> item's quote is a verbatim substring of that message's canonical text.**
-
-Concretely, for every surviving outline item and each piece of its evidence,
-`record.text.slice(offsetStart, offsetEnd) === quote` must hold exactly, and the
-displayed title/summary must be grounded in an evidence quote. Anything that fails
-is **dropped and counted**, never shown. This is tested with property + revert-
-sensitive tests: weakening the check (e.g. exact-substring → `includes`) turns a
-green fixture red. The extractor is deliberately **rules-based and extractive** (no
-rewriting) for the spike — a drop-in `Extractor` seam is ready for a neural
-extractor later, behind the same invariant.
-
-## How it works
-
-```
-ChatGPT tab (content script)          Service worker (owns the store)      Side panel
-─────────────────────────────         ──────────────────────────────      ──────────
-capture() over the persistent   ──►   §13 targeted router ──► store   ◄──  routed RPC:
-[data-turn-id] skeleton, reading      (attested source,      upsert →       subscribe +
-durable data-message-id UUIDs;        cross-tab firewall)    extract →      fetch outline;
-passive scroll-accumulate.                                   Evidence       renders the
-                                                             Invariant →    live outline.
-                                                             persist (Dexie)
+```sh
+npm ci
+npm run build
 ```
 
-- **Capture** walks ChatGPT's virtualized DOM: a persistent `[data-turn-id]`
-  skeleton (all turns) with only a ~windowed few hydrated at once. It keys on the
-  durable `data-message-id` UUID and accumulates as you scroll. Fails *closed* and
-  *loud* on selector rot rather than emitting polluted text.
-- **Routing** is targeted, not broadcast: a transcript payload from tab A reaches
-  only tab A's panel. Source identity is Chrome-attested; a cross-tab firewall and
-  per-caller read authorization enforce tenant isolation (§13).
-- **Storage** is local-first IndexedDB (Dexie), owned by the service worker so
-  captures survive the panel closing. Outlines are written under a
-  compare-and-swap so a stale index can't clobber a fresher one.
+Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and
+select this repository's `dist` directory. Open or reload a saved conversation on
+`chatgpt.com`, then click the extension action to open Sidekick.
 
-Nothing leaves your machine.
+Passive capture reads visible messages without scrolling. **Reindex conversation**
+runs a bounded scroll through available turns and restores the previous scroll
+position. Missing, changing, or unavailable turns produce a partial outline.
+Full indexing checks up to 2,000 turns or 45 seconds; reaching either limit is
+reported as partial. It never claims access to unavailable history.
 
-## Repo layout (pnpm + Turborepo monorepo)
+For a UI preview with explicitly labeled sample data:
 
-```
-packages/core                     DOM/host-free trust core (no dependencies):
-  protocol.ts   correlation-id RPC          router.ts    §13 attested/firewalled routing
-  model.ts      §4 data model               evidence.ts  the Evidence Invariant checker
-  extractor.ts  rules extractor + seam      store.ts     TranscriptStore + in-memory impl
-  pipeline.ts   records → outline           service.ts   the store-service RPC contract
-packages/adapters
-  provider-chatgpt   ChatGPT DOM → TranscriptEvent[] (anchors, canonicalize, capture, hydrate)
-  storage-dexie      TranscriptStore over IndexedDB
-  host-chrome        chrome.runtime transport, SW port router, routed RPC
-packages/ui          Preact side-panel components (OutlinePanel)
-apps/chrome-spike    the WXT MV3 extension wiring it all together
+```sh
+npm run dev
+# Open http://127.0.0.1:5173/sidepanel.html?demo
 ```
 
-Package boundaries are lint-enforced: **`core` imports nothing** (stays DOM- and
-host-free, so the trust rules are provider-agnostic); adapters/ui may import
-`core`; the app composes everything.
+## Trust and privacy
 
-## Getting started
+Every item has an exact quotation and offsets into a captured message. The core
+checks `message.text.slice(start, end) === quote`, and the title must be a substring
+of that quotation. Source navigation checks the live message against the saved
+canonical text before highlighting it. Edited or unavailable sources produce
+an error rather than highlighting a different message.
 
-```bash
-pnpm install
-pnpm test          # 125 unit/integration/component tests (Vitest)
-pnpm build         # builds all packages + the extension → apps/chrome-spike/.output/chrome-mv3
-pnpm typecheck     # strict tsc across the workspace
-pnpm lint          # eslint + package-boundary rules
-pnpm --filter chrome-spike e2e   # Playwright: SW smoke + capture → panel → source-jump
+Extraction uses deterministic rules; it does not paraphrase or call a model. It
+can miss decisions and does not infer whether later messages supersede them.
+
+Snapshots live in the extension's IndexedDB. The extension makes no network
+requests. Delete controls remove stored messages and outlines and pause capture
+until explicitly resumed with Reindex. Deleting one conversation retains minimal
+capture-order/deletion metadata to reject queued messages. Deleting all data also
+removes that metadata, retaining only a global pause preference. There is no sync,
+telemetry, or provider backend access.
+
+When the same conversation is open in multiple tabs, one tab owns capture.
+Reindex explicitly transfers capture to the current tab. Other tabs show a prompt
+to reindex rather than an outline from a potentially different message revision.
+
+## Development
+
+```sh
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium
+npm run e2e
 ```
 
-**Load the extension** (Chrome/Chromium):
+The browser test loads the production extension into Chromium against synthetic
+ChatGPT-shaped pages. It checks capture, full indexing, evidence navigation,
+saved-state reload, tab isolation, deletion, and explicit capture resumption.
+These checks do not establish compatibility with authenticated ChatGPT's current
+DOM or long-conversation virtualizer.
 
-1. `pnpm build`
-2. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-   select `apps/chrome-spike/.output/chrome-mv3`
-3. Open a `chatgpt.com` conversation, open the GPT-Sidekick side panel, and scroll.
+```text
+src/core          Pure types, extraction, evidence checks, snapshots
+src/provider      ChatGPT DOM capture, bounded hydration, source navigation
+src/background    Authorization, capture ordering, IndexedDB persistence
+src/panel         Preact side panel and explicit sample-data preview
+src/content.ts    Content-script entrypoint
+src/background.ts Service-worker entrypoint
+tests             Trust, lifecycle, storage, provider, and UI tests
+e2e               Built-extension browser journey
+```
 
-See [`HANDOFF.md`](./HANDOFF.md) for the load-test checklist and what to look for.
+## Next release gate
 
-## Development discipline
-
-RED-first TDD with revert-sensitivity checks (break the fix, confirm the specific
-test reds, restore), adversarial review at each milestone boundary, and scrupulous
-"proven vs assumed/gated" honesty in the plans. Real ChatGPT DOM captures used for
-anchor validation are personal data and live only in `fixtures.local/`
-(git-ignored) — never committed.
-
-## Docs
-
-- [`SPEC.md`](./SPEC.md) — the product/engineering spec
-- [`plans/`](./plans) — per-milestone plans (M0 skeleton, M1 capture, M2 core+evidence) with deferred-item tracking
-- [`HANDOFF.md`](./HANDOFF.md) — current status, the next action, and the watch-list
+Test a real authenticated ChatGPT conversation, including a long virtualized
+thread. Record capture coverage and time, scroll restoration, early/middle/late
+source navigation, streaming convergence, tab/window switching, and behavior
+after a service-worker restart. Keep real fixtures under the ignored
+`fixtures.local/` directory. Do not commit private transcript data.
