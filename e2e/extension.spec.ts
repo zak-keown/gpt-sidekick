@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 const fixture = (label: string) => `<!doctype html><html><head><title>${label} - ChatGPT</title></head><body>
 <main>
 <article data-turn-id="turn-a"><div data-message-author-role="user" data-message-id="message-a"><div class="whitespace-pre-wrap">Which browser comes first?</div></div></article>
-<article data-turn-id="turn-b"><div data-message-author-role="assistant" data-message-id="message-b"><div class="markdown"><p>We decided to use ${label}.</p><p>TODO: verify the source links.</p><button>Copy answer</button></div></div></article>
+<article data-turn-id="turn-b"><div data-message-author-role="assistant" data-message-id="message-b"><div class="markdown"><p>We decided to use ${label}. Its side panel keeps the outline beside the conversation.</p><p>TODO: verify the source links. Each link should highlight the exact original message.</p><button>Copy answer</button></div></div></article>
 <article data-turn-id="turn-c"><div data-message-author-role="assistant" data-message-id="message-c"><div class="markdown"><pre><code>const local = true;</code></pre></div></div></article>
 </main></body></html>`;
 
@@ -14,7 +14,7 @@ const fixture = (label: string) => `<!doctype html><html><head><title>${label} -
 // Text and identifiers are synthetic; no real conversation data is stored here.
 const modernFixture = (label: string, conversationId: string) => `<!doctype html><html><head><title>${label} - ChatGPT</title></head><body><main>
 <div data-turn-key="turn-a"><div data-content-search-turn-key="fallback-turn-0"><div data-talvt-turn-state="complete"><div data-chatgpt-search-unit-key="fallback-turn-0:0:user" data-chatgpt-search-message-ids="message-a"><div data-user-message-bubble="true">Which browser comes first?</div></div></div></div></div>
-<div data-turn-key="turn-b"><div data-content-search-turn-key="fallback-turn-1"><div data-talvt-turn-state="complete"><div data-chatgpt-search-unit-key="fallback-turn-1:2:assistant" data-chatgpt-search-message-ids="message-b message-b"><h4 data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-conversation-id="${conversationId}" data-chatgpt-selection-message-id="message-b"><div data-markdown-text-style="assistant-message"><p>We decided to use ${label}.</p><p>TODO: verify the source links.</p></div></div><button>Copy answer</button></div></div></div></div>
+<div data-turn-key="turn-b"><div data-content-search-turn-key="fallback-turn-1"><div data-talvt-turn-state="complete"><div data-chatgpt-search-unit-key="fallback-turn-1:2:assistant" data-chatgpt-search-message-ids="message-b message-b"><h4 data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-conversation-id="${conversationId}" data-chatgpt-selection-message-id="message-b"><div data-markdown-text-style="assistant-message"><p>We decided to use ${label}. Its side panel keeps the outline beside the conversation.</p><p>TODO: verify the source links. Each link should highlight the exact original message.</p></div></div><button>Copy answer</button></div></div></div></div>
 <div data-turn-key="turn-c"><div data-content-search-turn-key="fallback-turn-2"><div data-talvt-turn-state="complete"><div data-chatgpt-search-unit-key="fallback-turn-2:2:assistant" data-chatgpt-search-message-ids="message-c"><h4 data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-conversation-id="${conversationId}" data-chatgpt-selection-message-id="message-c"><div data-markdown-text-style="assistant-message"><pre><code>const local = true;</code></pre></div></div></div></div></div></div>
 </main></body></html>`;
 
@@ -60,6 +60,9 @@ test(`built extension captures, persists, navigates, isolates tabs, and deletes 
     await expect(panel.getByText('3 of 3 loaded turns captured')).toBeVisible();
     await panel.getByRole('button', { name: 'View source', exact: true }).first().evaluate(button => (button as HTMLButtonElement).click());
     await expect(chat.locator(layout === 'legacy' ? '[data-message-id="message-b"]' : '[data-chatgpt-selection-message-id="message-b"]')).toHaveCSS('outline-style', 'solid');
+
+    await panel.setViewportSize({ width: 360, height: 900 });
+    await panel.screenshot({ path: `test-results/sidekick-working-${layout}.png`, fullPage: true });
 
     // Reopening the extension page reads saved data without a new DOM mutation.
     await panel.reload();
